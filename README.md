@@ -51,7 +51,8 @@ included. The app remembers the last folder used in
 
 ## Quick start
 
-1. Extract the complete `ARD Viewer` distribution folder.
+1. Download `KH1 ARD Viewer.exe` from the latest GitHub Release, or build it
+   from source using the instructions below.
 2. Install the .NET 10 Desktop Runtime for Windows x64 if it is not already
    installed.
 3. Run `KH1 ARD Viewer.exe`.
@@ -143,6 +144,20 @@ files but does not bundle the .NET Desktop Runtime. The project embeds
 `Data\KH1 ARD Viewer.ico` into the executable; the transparent PNG source is
 `Data\KH1 ARD Viewer.png`.
 
+## Automatic releases
+
+GitHub Actions builds the Windows x64 executable and publishes it as a GitHub
+Release whenever a version tag matching `v*` is pushed. For example, create and
+push a tag to publish a release:
+
+```powershell
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+The workflow uploads `KH1 ARD Viewer.exe` as a release asset. Releases are
+framework-dependent and require the .NET 10 Desktop Runtime for Windows x64.
+
 ## How it works
 
 1. **Archive discovery** - The reader validates the ARD offset table and uses
@@ -164,10 +179,12 @@ files but does not bundle the .NET Desktop Runtime. The project embeds
 
 ```text
 ARD Viewer/
-|-- KH1 ARD Viewer.exe             Published desktop application
 |-- Build.bat                      Build and launch script
 |-- README.md                      This guide
 |-- .gitignore                     Build and local-output exclusions
+|-- .github/
+|   `-- workflows/
+|       `-- release.yml            Build and publish tagged releases
 `-- Data/
     |-- KH1ARDViewer.csproj
     |-- NativeViewerForm.cs        Native UI and OpenGL viewport
