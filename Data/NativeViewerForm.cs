@@ -595,7 +595,8 @@ internal sealed class NativeViewerForm : Form
             string directory = GetExportDirectory(_selected);
             Directory.CreateDirectory(directory);
             string path = Path.Combine(directory, SanitizeFileName(_selected.Name, "model") + ".gltf");
-            File.WriteAllText(path, NativeGltfExporter.Create(_selected, directory), new UTF8Encoding(false));
+            File.WriteAllText(path, NativeGltfExporter.Create(
+                _selected, directory), new UTF8Encoding(false));
             _status.Text = $"Exported: {path}";
         }
         catch (Exception error)
@@ -1049,6 +1050,7 @@ internal static class NativeGltfExporter
         var views = new List<Dictionary<string, object>>();
         var accessors = new List<Dictionary<string, object>>();
         var meshes = new List<object>();
+        var meshUsesSkin = new List<bool>();
 
         int AddAccessor(byte[] bytes, int componentType, string type, int count, int target,
             bool normalized = false, float[]? min = null, float[]? max = null)
@@ -1057,10 +1059,12 @@ internal static class NativeGltfExporter
             int offset = checked((int)binary.Length);
             binary.Write(bytes);
             int viewIndex = views.Count;
-            views.Add(new Dictionary<string, object>
+            var view = new Dictionary<string, object>
             {
-                ["buffer"] = 0, ["byteOffset"] = offset, ["byteLength"] = bytes.Length, ["target"] = target
-            });
+                ["buffer"] = 0, ["byteOffset"] = offset, ["byteLength"] = bytes.Length
+            };
+            if (target != 0) view["target"] = target;
+            views.Add(view);
             var accessor = new Dictionary<string, object>
             {
                 ["bufferView"] = viewIndex, ["componentType"] = componentType, ["type"] = type, ["count"] = count
@@ -1072,30 +1076,57 @@ internal static class NativeGltfExporter
             return accessors.Count - 1;
         }
 
+        bool hasSkeleton = model.Joints.Count > 1;
         foreach (ArdViewerMesh source in model.Meshes)
         {
+            float[] positions = source.Positions;
+            bool useSkin = hasSkeleton && source.JointIds.Length == source.Positions.Length / 3;
+            (byte[] Joints, int JointComponentType, float[] Weights)? skinData = null;
+            if (useSkin)
+            {
+                var vertexJoints = new ushort[source.JointIds.Length * 4];
+                var weights = new float[source.JointIds.Length * 4];
+                for (int vertex = 0; vertex < source.JointIds.Length; vertex++)
+                {
+                    vertexJoints[vertex * 4] = checked((ushort)source.JointIds[vertex]);
+                    weights[vertex * 4] = 1;
+                }
+                byte[] jointBytes;
+                int jointComponentType;
+                if (model.Joints.Count <= byte.MaxValue + 1)
+                {
+                    jointBytes = vertexJoints.Select(value => checked((byte)value)).ToArray();
+                    jointComponentType = 5121;
+                }
+                else
+                {
+                    jointBytes = ToBytes(vertexJoints);
+                    jointComponentType = 5123;
+                }
+                skinData = (jointBytes, jointComponentType, weights);
+            }
             float[] uv = (float[])source.Uvs.Clone();
             if (model.Format == "MDLS")
                 for (int i = 1; i < uv.Length; i += 2) uv[i] = 1 - uv[i];
             float[] min = { float.PositiveInfinity, float.PositiveInfinity, float.PositiveInfinity };
             float[] max = { float.NegativeInfinity, float.NegativeInfinity, float.NegativeInfinity };
-            for (int i = 0; i < source.Positions.Length; i += 3)
+            for (int i = 0; i < positions.Length; i += 3)
                 for (int axis = 0; axis < 3; axis++)
                 {
-                    min[axis] = Math.Min(min[axis], source.Positions[i + axis]);
-                    max[axis] = Math.Max(max[axis], source.Positions[i + axis]);
+                    min[axis] = Math.Min(min[axis], positions[i + axis]);
+                    max[axis] = Math.Max(max[axis], positions[i + axis]);
                 }
-            int positionAccessor = AddAccessor(ToBytes(source.Positions), 5126, "VEC3",
-                source.Positions.Length / 3, 34962, min: min, max: max);
+            int positionAccessor = AddAccessor(ToBytes(positions), 5126, "VEC3",
+                positions.Length / 3, 34962, min: min, max: max);
             var attributes = new Dictionary<string, int> { ["POSITION"] = positionAccessor };
-            if (uv.Length == source.Positions.Length / 3 * 2)
+            if (uv.Length == positions.Length / 3 * 2)
                 attributes["TEXCOORD_0"] = AddAccessor(ToBytes(uv), 5126, "VEC2", uv.Length / 2, 34962);
             byte[] colors = Convert.FromBase64String(source.Colors);
-            if (colors.Length == source.Positions.Length / 3 * 4)
+            if (colors.Length == positions.Length / 3 * 4)
                 attributes["COLOR_0"] = AddAccessor(colors, 5121, "VEC4", colors.Length / 4, 34962, normalized: true);
             byte[] indexBytes;
             int indexType;
-            if (source.Positions.Length / 3 <= ushort.MaxValue)
+            if (positions.Length / 3 <= ushort.MaxValue)
             {
                 var shorts = source.Indices.Select(i => checked((ushort)i)).ToArray();
                 indexBytes = ToBytes(shorts);
@@ -1107,12 +1138,70 @@ internal static class NativeGltfExporter
                 indexType = 5125;
             }
             int indexAccessor = AddAccessor(indexBytes, indexType, "SCALAR", source.Indices.Length, 34963);
+            if (skinData is { } attributesForSkin)
+            {
+                attributes["JOINTS_0"] = AddAccessor(attributesForSkin.Joints, attributesForSkin.JointComponentType,
+                    "VEC4", source.JointIds.Length, 34962);
+                attributes["WEIGHTS_0"] = AddAccessor(ToBytes(attributesForSkin.Weights), 5126,
+                    "VEC4", source.JointIds.Length, 34962);
+            }
             int material = source.Texture >= 0 && source.Texture < model.Textures.Count
                 ? source.Texture : model.Textures.Count;
-            meshes.Add(new
+            meshes.Add(new Dictionary<string, object>
             {
-                name = source.Name,
-                primitives = new[] { new { attributes, indices = indexAccessor, material, mode = 4 } }
+                ["name"] = source.Name,
+                ["primitives"] = new[] { new { attributes, indices = indexAccessor, material, mode = 4 } }
+            });
+            meshUsesSkin.Add(skinData.HasValue);
+        }
+
+        bool hasSkin = meshUsesSkin.Any(value => value);
+        var nodes = new List<Dictionary<string, object>>();
+        for (int i = 0; i < meshes.Count; i++)
+        {
+            var node = new Dictionary<string, object>
+            {
+                ["mesh"] = i,
+                ["name"] = model.Meshes[i].Name
+            };
+            if (meshUsesSkin[i]) node["skin"] = 0;
+            nodes.Add(node);
+        }
+
+        var sceneNodes = Enumerable.Range(0, meshes.Count).ToList();
+        var skins = new List<object>();
+        if (hasSkin)
+        {
+            int boneNodeOffset = nodes.Count;
+            int[] boneNodeIndices = Enumerable.Range(boneNodeOffset, model.Joints.Count).ToArray();
+            for (int i = 0; i < model.Joints.Count; i++)
+            {
+                ArdViewerJoint joint = model.Joints[i];
+                float[] localMatrix = joint.LocalMatrix;
+                var node = new Dictionary<string, object>
+                {
+                    ["name"] = joint.Name,
+                    ["matrix"] = localMatrix
+                };
+                int[] children = model.Joints.Select((candidate, childIndex) => (candidate, childIndex))
+                    .Where(pair => pair.candidate.ParentIndex == i)
+                    .Select(pair => boneNodeIndices[pair.childIndex])
+                    .ToArray();
+                if (children.Length > 0) node["children"] = children;
+                nodes.Add(node);
+                if (joint.ParentIndex < 0) sceneNodes.Add(boneNodeIndices[i]);
+            }
+
+            var inverseBindMatrices = model.Joints.SelectMany(joint => joint.InverseBindMatrix).ToArray();
+            int inverseBindAccessor = AddAccessor(ToBytes(inverseBindMatrices), 5126, "MAT4",
+                model.Joints.Count, 0);
+            int skeletonRoot = model.Joints.FindIndex(joint => joint.ParentIndex < 0);
+            skins.Add(new
+            {
+                name = $"{model.Name} armature",
+                joints = boneNodeIndices,
+                skeleton = skeletonRoot >= 0 ? boneNodeIndices[skeletonRoot] : boneNodeIndices[0],
+                inverseBindMatrices = inverseBindAccessor
             });
         }
 
@@ -1142,15 +1231,23 @@ internal static class NativeGltfExporter
             pbrMetallicRoughness = new { baseColorFactor = new[] { 1, 1, 1, 1 }, metallicFactor = 0, roughnessFactor = 1 }
         }).ToArray();
 
-        return JsonSerializer.Serialize(new
+        var gltf = new Dictionary<string, object>
         {
-            asset = new { version = "2.0", generator = "ARD Extractor native viewer" },
-            scene = 0,
-            scenes = new[] { new { nodes = meshes.Select((_, i) => i).ToArray() } },
-            nodes = meshes.Select((mesh, i) => new { mesh = i, name = model.Meshes[i].Name }).ToArray(),
-            meshes, materials, images, textures, samplers, accessors, bufferViews = views,
-            buffers = new[] { new { byteLength = data.Length, uri } }
-        });
+            ["asset"] = new { version = "2.0", generator = "ARD Extractor native viewer" },
+            ["scene"] = 0,
+            ["scenes"] = new[] { new { nodes = sceneNodes } },
+            ["nodes"] = nodes,
+            ["meshes"] = meshes,
+            ["materials"] = materials,
+            ["images"] = images,
+            ["textures"] = textures,
+            ["samplers"] = samplers,
+            ["accessors"] = accessors,
+            ["bufferViews"] = views,
+            ["buffers"] = new[] { new { byteLength = data.Length, uri } }
+        };
+        if (skins.Count > 0) gltf["skins"] = skins;
+        return JsonSerializer.Serialize(gltf);
     }
 
     private static byte[] ToBytes(float[] values)

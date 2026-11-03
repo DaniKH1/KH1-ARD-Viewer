@@ -21,6 +21,7 @@ textures, and exports it as a glTF 2.0 file with PNG textures alongside it.
   when the viewer starts.
 - Expand or collapse each archive's model list, then select a model for viewing.
 - Render MDLS and MFA geometry in a native OpenGL viewport.
+- Export rigged MDLS models with their armature, bones, and vertex weights.
 - Orbit, zoom, and pan around the model, with a ground grid for scale and
   orientation.
 - View mesh, vertex, triangle, and texture counts for the selected model.
@@ -108,7 +109,8 @@ KH1 ARD Viewer targets Kingdom Hearts 1 ARD archives and their supported model
 resources:
 
 - **MDLS**: model geometry, decoded textures, mesh texture assignments, and
-  available joint transforms.
+  available joint transforms. Skinned glTF exports preserve the armature,
+  bones, and vertex weights in the bind pose.
 - **MFA**: geometry, vertex colors, and decoded PlayStation 2 GS textures,
   using the MFA parsing and texture-decoding logic refined against the KH1
   Unity importer.
@@ -118,6 +120,13 @@ keeps their UV handling separate: MDLS textures receive the row orientation
 needed by the renderer, while MFA UV coordinates and decoded texture rows are
 preserved. Unsupported or malformed resources may be skipped; an archive can
 open successfully even if it contains no usable MDLS or MFA models.
+
+MSET playback is currently disabled. The previous preview treated static
+transform records as a complete pose and blended them artificially; that did
+not reproduce the original animation and could place parts of a model
+incorrectly. MSET data will remain unavailable in the viewer until its
+animation channels and timing are decoded and validated against the source
+format.
 
 ## Build from source
 

@@ -12,6 +12,15 @@ internal sealed class ArdViewerModel
     public string Archive { get; set; } = "";
     public List<ArdViewerTexture> Textures { get; set; } = new();
     public List<ArdViewerMesh> Meshes { get; set; } = new();
+    public List<ArdViewerJoint> Joints { get; set; } = new();
+}
+
+internal sealed class ArdViewerJoint
+{
+    public string Name { get; set; } = "";
+    public int ParentIndex { get; set; } = -1;
+    public float[] LocalMatrix { get; set; } = Array.Empty<float>();
+    public float[] InverseBindMatrix { get; set; } = Array.Empty<float>();
 }
 
 internal sealed class ArdViewerTexture
@@ -27,6 +36,7 @@ internal sealed class ArdViewerMesh
 {
     public string Name { get; set; } = "";
     public float[] Positions { get; set; } = Array.Empty<float>();
+    public int[] JointIds { get; set; } = Array.Empty<int>();
     public float[] Uvs { get; set; } = Array.Empty<float>();
     public string Colors { get; set; } = "";
     public int[] Indices { get; set; } = Array.Empty<int>();
@@ -193,15 +203,38 @@ internal static class ArdViewer
 
         Matrix4x4[] joints = BuildJointWorld(source.Joints);
         bool rigged = source.Joints.Count > 1;
+        Matrix4x4[] jointLocals = source.Joints.Select(BuildJointLocal).ToArray();
+        Matrix4x4 basis = Matrix4x4.CreateScale(-0.01f, 0.01f, 0.01f);
+        Matrix4x4.Invert(basis, out Matrix4x4 inverseBasis);
+        for (int i = 0; i < source.Joints.Count; i++)
+        {
+            Matrix4x4 convertedWorld = inverseBasis * joints[i] * basis;
+            if (!Matrix4x4.Invert(convertedWorld, out Matrix4x4 inverseBind))
+                throw new InvalidDataException($"MDLS joint {i} has a singular bind transform.");
+            int parent = source.Joints[i].ParentId == 0x3ff ? -1 : (int)source.Joints[i].ParentId;
+            model.Joints.Add(new ArdViewerJoint
+            {
+                Name = $"{name} / joint {i}",
+                ParentIndex = parent >= 0 && parent < i ? parent : -1,
+                LocalMatrix = ToMatrixArray(inverseBasis * jointLocals[i] * basis),
+                InverseBindMatrix = ToMatrixArray(inverseBind)
+            });
+        }
+
         for (int meshIndex = 0; meshIndex < source.Meshes.Count; meshIndex++)
         {
             MdlsMesh mesh = source.Meshes[meshIndex];
             var positions = new List<float>(mesh.Vertices.Count * 3);
             var uvs = new List<float>(mesh.Vertices.Count * 2);
             var colors = new List<byte>(mesh.Vertices.Count * 4);
+            var jointIds = new int[mesh.Vertices.Count];
+            int vertexIndex = 0;
             foreach (MdlsVertex vertex in mesh.Vertices)
             {
                 var point = new Vector3(vertex.TranslateX, vertex.TranslateY, vertex.TranslateZ);
+                jointIds[vertexIndex] = vertex.JointId >= 0 && vertex.JointId < source.Joints.Count
+                    ? vertex.JointId
+                    : 0;
                 if (rigged && vertex.JointId >= 0 && vertex.JointId < joints.Length)
                     point = Vector3.Transform(point, joints[vertex.JointId]);
                 positions.Add(-point.X * 0.01f);
@@ -210,6 +243,7 @@ internal static class ArdViewer
                 uvs.Add(vertex.TexCoordU);
                 uvs.Add(vertex.TexCoordV);
                 colors.AddRange(new byte[] { 255, 255, 255, 255 });
+                vertexIndex++;
             }
             var indices = new List<int>(mesh.Faces.Count * 3);
             foreach (int[] face in mesh.Faces)
@@ -227,11 +261,28 @@ internal static class ArdViewer
                 Colors = Convert.ToBase64String(colors.ToArray()),
                 Uvs = uvs.ToArray(),
                 Indices = indices.ToArray(),
+                JointIds = jointIds,
                 Texture = mesh.TextureIndex >= 0 && mesh.TextureIndex < model.Textures.Count ? mesh.TextureIndex : -1
             });
         }
+
         return model;
     }
+
+    private static Matrix4x4 BuildJointLocal(MdlsJoint joint) =>
+        Matrix4x4.CreateScale(joint.ScaleX, joint.ScaleY, joint.ScaleZ) *
+        Matrix4x4.CreateRotationX(joint.RotateX) *
+        Matrix4x4.CreateRotationY(joint.RotateY) *
+        Matrix4x4.CreateRotationZ(joint.RotateZ) *
+        Matrix4x4.CreateTranslation(joint.TranslateX, joint.TranslateY, joint.TranslateZ);
+
+    private static float[] ToMatrixArray(Matrix4x4 matrix) =>
+    [
+        matrix.M11, matrix.M12, matrix.M13, matrix.M14,
+        matrix.M21, matrix.M22, matrix.M23, matrix.M24,
+        matrix.M31, matrix.M32, matrix.M33, matrix.M34,
+        matrix.M41, matrix.M42, matrix.M43, matrix.M44
+    ];
 
     private static ArdViewerModel ConvertMfa(MfaModel source, string name)
     {
@@ -294,11 +345,7 @@ internal static class ArdViewer
         for (int i = 0; i < joints.Count; i++)
         {
             MdlsJoint joint = joints[i];
-            Matrix4x4 local = Matrix4x4.CreateScale(joint.ScaleX, joint.ScaleY, joint.ScaleZ) *
-                Matrix4x4.CreateRotationX(joint.RotateX) *
-                Matrix4x4.CreateRotationY(joint.RotateY) *
-                Matrix4x4.CreateRotationZ(joint.RotateZ) *
-                Matrix4x4.CreateTranslation(joint.TranslateX, joint.TranslateY, joint.TranslateZ);
+            Matrix4x4 local = BuildJointLocal(joint);
             int parent = joint.ParentId == 0x3ff ? -1 : (int)joint.ParentId;
             world[i] = parent >= 0 && parent < i ? local * world[parent] : local;
         }

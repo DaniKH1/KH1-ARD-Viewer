@@ -17,6 +17,7 @@ h1{font-size:18px;margin:0 0 6px}p{color:#aab4c3;line-height:1.45;margin:6px 0 1
 button{font:inherit;background:#252d39;border:1px solid #3c4656;color:#edf2f8;border-radius:5px;cursor:pointer}
 button:hover{border-color:#7ba7e1}
 button:disabled{opacity:.55;cursor:wait}
+select{font:inherit;background:#181d25;border:1px solid #4b5668;color:#edf2f8;border-radius:5px}
 .file-actions{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin:14px 0;flex:0 0 auto}
 .file-actions button{padding:9px 6px;font-size:12px}
 .section-title{font-size:12px;color:#aab4c3;margin:10px 0 7px;flex:0 0 auto}
@@ -137,13 +138,14 @@ function loadModel(index){
   if(model.format==='MDLS')for(let i=1;i<uv.length;i+=2)uv[i]=1-uv[i];
   for(let i=0;i<pos.length;i+=3){for(let a=0;a<3;a++){lo[a]=Math.min(lo[a],pos[i+a]);hi[a]=Math.max(hi[a],pos[i+a]);}}
   vertices+=pos.length/3;triangles+=ind.length/3;
-  gpu.push({p:buffer(gl.ARRAY_BUFFER,pos),c:buffer(gl.ARRAY_BUFFER,col),uv:buffer(gl.ARRAY_BUFFER,uv),i:buffer(gl.ELEMENT_ARRAY_BUFFER,ind),count:ind.length,texture:m.texture>=0?textures[m.texture]:null});
+  gpu.push({p:buffer(gl.ARRAY_BUFFER,pos),positions:pos,basePositions:pos,c:buffer(gl.ARRAY_BUFFER,col),uv:buffer(gl.ARRAY_BUFFER,uv),i:buffer(gl.ELEMENT_ARRAY_BUFFER,ind),count:ind.length,texture:m.texture>=0?textures[m.texture]:null});
  }
  if(!Number.isFinite(lo[0]))lo=[-1,-1,-1],hi=[1,1,1];
  center=lo.map((v,i)=>(v+hi[i])/2);radius=Math.max(.01,Math.hypot(hi[0]-lo[0],hi[1]-lo[1],hi[2]-lo[2])/2);distance=radius*2.8;pan=[0,0,0];
  rebuildGrid(lo[1]-radius*.015);
  stats.textContent='Meshes: '+model.meshes.length+'\nVertices: '+vertices.toLocaleString()+'\nTriangles: '+triangles.toLocaleString()+'\nTextures: '+model.textures.length;
- status.textContent='';const exportButton=document.getElementById('export');exportButton.disabled=false;exportButton.hidden=false;textureModal.hidden=true;renderTextures(model);renderArchives();draw();
+ status.textContent='';const exportButton=document.getElementById('export');exportButton.disabled=false;exportButton.hidden=false;textureModal.hidden=true;renderTextures(model);renderArchives();
+ draw();
 }
 function perspective(fovy,aspect,near,far){const f=1/Math.tan(fovy/2),nf=1/(near-far);return new Float32Array([f/aspect,0,0,0,0,f,0,0,0,0,(far+near)*nf,-1,0,0,2*far*near*nf,0]);}
 function lookAt(eye,target){let z=norm(sub(eye,target)),x=norm(cross([0,1,0],z)),y=cross(z,x);return new Float32Array([x[0],y[0],z[0],0,x[1],y[1],z[1],0,x[2],y[2],z[2],0,-dot(x,eye),-dot(y,eye),-dot(z,eye),1]);}
@@ -235,15 +237,18 @@ function makeGltf(model){
  function addAccessor(data,componentType,type,count,target,normalized=false,min,max){
   const padding=(4-byteLength%4)%4;if(padding){parts.push(new Uint8Array(padding));byteLength+=padding;}
   const bytes=new Uint8Array(data.buffer,data.byteOffset,data.byteLength),viewIndex=bufferViews.length;
-  bufferViews.push({buffer:0,byteOffset:byteLength,byteLength:bytes.length,target});
+  const view={buffer:0,byteOffset:byteLength,byteLength:bytes.length};if(target)view.target=target;
+  bufferViews.push(view);
   parts.push(bytes);byteLength+=bytes.length;
   const accessor={bufferView:viewIndex,componentType,type,count};
   if(normalized)accessor.normalized=true;if(min)accessor.min=min;if(max)accessor.max=max;
   accessors.push(accessor);return accessors.length-1;
  }
- const meshes=[];
+ const meshes=[],meshUsesSkin=[],hasSkeleton=model.joints?.length>1;
  for(const source of model.meshes){
-  const positions=new Float32Array(source.positions),indices=new Uint32Array(source.indices),uvs=new Float32Array(source.uvs),colors=Uint8Array.from(atob(source.colors),c=>c.charCodeAt(0));
+  const useSkin=hasSkeleton&&source.jointIds?.length===source.positions.length/3;
+  const sourcePositions=source.positions;
+  const positions=new Float32Array(sourcePositions),indices=new Uint32Array(source.indices),uvs=new Float32Array(source.uvs),colors=Uint8Array.from(atob(source.colors),c=>c.charCodeAt(0));
   if(model.format==='MDLS')for(let i=1;i<uvs.length;i+=2)uvs[i]=1-uvs[i];
   const indexData=positions.length/3<=65535?new Uint16Array(indices):indices;
   const min=[Infinity,Infinity,Infinity],max=[-Infinity,-Infinity,-Infinity];
@@ -252,10 +257,35 @@ function makeGltf(model){
    POSITION:addAccessor(positions,5126,'VEC3',positions.length/3,34962,false,min,max),
    NORMAL:addAccessor(calculateNormals(positions,indices),5126,'VEC3',positions.length/3,34962)
   };
+  if(useSkin){
+   const jointValues=new Uint16Array(source.jointIds.length*4),weightValues=new Float32Array(source.jointIds.length*4);
+   for(let i=0;i<source.jointIds.length;i++){jointValues[i*4]=source.jointIds[i];weightValues[i*4]=1;}
+   if(model.joints.length<=256){
+    const bytes=Uint8Array.from(jointValues);
+    attributes.JOINTS_0=addAccessor(bytes,5121,'VEC4',source.jointIds.length,34962);
+   }else attributes.JOINTS_0=addAccessor(jointValues,5123,'VEC4',source.jointIds.length,34962);
+   attributes.WEIGHTS_0=addAccessor(weightValues,5126,'VEC4',source.jointIds.length,34962);
+  }
   if(uvs.length===positions.length/3*2)attributes.TEXCOORD_0=addAccessor(uvs,5126,'VEC2',positions.length/3,34962);
   if(colors.length===positions.length/3*4)attributes.COLOR_0=addAccessor(colors,5121,'VEC4',colors.length/4,34962,true);
   const textureIndex=Number.isInteger(source.texture)&&source.texture>=0&&source.texture<model.textures.length?source.texture:-1;
   meshes.push({name:source.name,primitives:[{attributes,indices:addAccessor(indexData,indexData instanceof Uint16Array?5123:5125,'SCALAR',indexData.length,34963),material:textureIndex<0?model.textures.length:textureIndex,mode:4}]});
+  meshUsesSkin.push(useSkin);
+ }
+ const nodes=meshes.map((mesh,i)=>({mesh:i,name:model.meshes[i].name,...(meshUsesSkin[i]?{skin:0}:{})}));
+ const sceneNodes=nodes.map((_,i)=>i),skins=[];
+ if(meshUsesSkin.some(Boolean)){
+  const boneOffset=nodes.length,boneNodes=model.joints.map((_,i)=>boneOffset+i);
+  for(let i=0;i<model.joints.length;i++){
+   const joint=model.joints[i],matrix=joint.localMatrix;
+   const children=model.joints.map((candidate,index)=>candidate.parentIndex===i?boneNodes[index]:-1).filter(index=>index>=0);
+   nodes.push({name:joint.name,matrix,...(children.length?{children}:{})});
+   if(joint.parentIndex<0)sceneNodes.push(boneNodes[i]);
+  }
+  const inverseBind=new Float32Array(model.joints.flatMap(joint=>joint.inverseBindMatrix));
+  const inverseBindAccessor=addAccessor(inverseBind,5126,'MAT4',model.joints.length,0);
+  const skeletonRoot=model.joints.findIndex(joint=>joint.parentIndex<0);
+  skins.push({name:model.name+' armature',joints:boneNodes,skeleton:boneNodes[skeletonRoot>=0?skeletonRoot:0],inverseBindMatrices:inverseBindAccessor});
  }
  let totalLength=0;for(const part of parts)totalLength+=part.length;
  const binary=new Uint8Array(totalLength);let offset=0;for(const part of parts){binary.set(part,offset);offset+=part.length;}
@@ -266,7 +296,9 @@ function makeGltf(model){
  const textures=model.textures.map((_,i)=>({sampler:i,source:i}));
  const materials=model.textures.map((_,i)=>({name:'Material '+(i+1),pbrMetallicRoughness:{baseColorTexture:{index:i},metallicFactor:0,roughnessFactor:1},alphaMode:'BLEND'}));
  materials.push({name:'Untextured',pbrMetallicRoughness:{baseColorFactor:[1,1,1,1],metallicFactor:0,roughnessFactor:1}});
- return {gltf:JSON.stringify({asset:{version:'2.0',generator:'ARD Extractor'},scene:0,scenes:[{nodes:meshes.map((_,i)=>i)}],nodes:meshes.map((_,i)=>({mesh:i,name:meshes[i].name})),meshes,materials,images,textures,samplers,accessors,bufferViews,buffers:[{byteLength,uri:'data:application/octet-stream;base64,'+btoa(binaryString)}]}),textureFiles};
+ const gltf={asset:{version:'2.0',generator:'ARD Extractor'},scene:0,scenes:[{nodes:sceneNodes}],nodes,meshes,materials,images,textures,samplers,accessors,bufferViews,buffers:[{byteLength,uri:'data:application/octet-stream;base64,'+btoa(binaryString)}]};
+ if(skins.length)gltf.skins=skins;
+ return {gltf:JSON.stringify(gltf),textureFiles};
 }
 document.getElementById('export').addEventListener('click',async event=>{
  if(current<0)return;
