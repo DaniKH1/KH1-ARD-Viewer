@@ -430,6 +430,8 @@ internal sealed class NativeViewerForm : Form
 
     private void AddArchive(string path, List<ArdViewerModel> loaded)
     {
+        if (loaded.Count == 0) return;
+
         string archiveName = Path.GetFileName(path);
         var archiveNode = new TreeNode(archiveName)
         {
@@ -445,17 +447,7 @@ internal sealed class NativeViewerForm : Form
             _nodes[model] = node;
             _allModels.Add(model);
         }
-        if (archiveNode.Nodes.Count == 0)
-        {
-            archiveNode.Nodes.Add(new TreeNode("No supported MDLS or MFA models found")
-            {
-                ForeColor = Color.FromArgb(126, 137, 152)
-            });
-        }
-        else
-        {
-            archiveNode.Text = $"▸ {archiveName}";
-        }
+        archiveNode.Text = $"▸ {archiveName}";
         _models.Nodes.Add(archiveNode);
     }
 
