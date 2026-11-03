@@ -519,19 +519,71 @@ internal sealed class NativeViewerForm : Form
 
     private void ShowTexturePreview(ArdViewerTexture texture)
     {
+        using var overlay = new Form
+        {
+            FormBorderStyle = FormBorderStyle.None,
+            ShowInTaskbar = false,
+            StartPosition = FormStartPosition.Manual,
+            Location = PointToScreen(Point.Empty),
+            ClientSize = ClientSize,
+            BackColor = Color.Black,
+            Opacity = 0.62,
+            KeyPreview = true
+        };
         using var preview = new Form
         {
             Text = $"{texture.Name} · {texture.Width} × {texture.Height}",
-            StartPosition = FormStartPosition.CenterParent,
-            FormBorderStyle = FormBorderStyle.SizableToolWindow,
-            ClientSize = new Size(620, 620),
+            FormBorderStyle = FormBorderStyle.None,
+            ShowInTaskbar = false,
+            StartPosition = FormStartPosition.Manual,
             BackColor = Color.FromArgb(16, 19, 25),
+            Padding = new Padding(12),
             KeyPreview = true
         };
-        var image = new PictureBox { Dock = DockStyle.Fill, SizeMode = PictureBoxSizeMode.Zoom, Image = MakeBitmap(texture) };
+        int maxWidth = Math.Max(1, Math.Min(900, (int)(ClientSize.Width * 0.8)));
+        int maxHeight = Math.Max(1, Math.Min(700, (int)(ClientSize.Height * 0.8) - 32));
+        double scale = Math.Min(4, Math.Min((double)maxWidth / texture.Width, (double)maxHeight / texture.Height));
+        int imageWidth = Math.Max(1, (int)Math.Round(texture.Width * scale));
+        int imageHeight = Math.Max(1, (int)Math.Round(texture.Height * scale));
+        var image = new PictureBox
+        {
+            Bounds = new Rectangle(12, 38, imageWidth, imageHeight),
+            SizeMode = PictureBoxSizeMode.Zoom,
+            Image = MakeBitmap(texture),
+            BackColor = Color.FromArgb(12, 15, 20)
+        };
+        preview.ClientSize = new Size(imageWidth + 24, imageHeight + 50);
+        preview.Controls.Add(new Label
+        {
+            Text = $"{texture.Name} · {texture.Width} × {texture.Height}",
+            Bounds = new Rectangle(12, 8, imageWidth, 24),
+            AutoEllipsis = true,
+            ForeColor = Color.FromArgb(229, 233, 240),
+            TextAlign = ContentAlignment.MiddleLeft
+        });
         preview.Controls.Add(image);
-        preview.KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape) preview.Close(); };
-        preview.ShowDialog(this);
+        overlay.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode != Keys.Escape) return;
+            e.Handled = true;
+            overlay.Close();
+        };
+        overlay.MouseDown += (_, _) => overlay.Close();
+        preview.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode != Keys.Escape) return;
+            e.Handled = true;
+            overlay.Close();
+        };
+        overlay.Shown += (_, _) =>
+        {
+            preview.Show(overlay);
+            preview.Location = new Point(
+                overlay.Left + (overlay.Width - preview.Width) / 2,
+                overlay.Top + (overlay.Height - preview.Height) / 2);
+            preview.BringToFront();
+        };
+        overlay.ShowDialog(this);
         image.Image.Dispose();
     }
 
