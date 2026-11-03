@@ -143,22 +143,15 @@ files but does not bundle the .NET Desktop Runtime. The project embeds
 
 ## GitHub Actions builds and releases
 
-Every push to `main` automatically builds the Windows x64 executable and
-publishes it as a GitHub **pre-release** with a `build-*` tag. To trigger the
-same build manually, open the repository's **Actions** tab, select **Build and
-publish release**, and choose **Run workflow**. The executable is also
-available as the `KH1-ARD-Viewer-win-x64` artifact on the workflow run.
+To build and publish a release, open the repository's **Actions** tab, select
+**Release Manual Executable**, and choose **Run workflow**. Optionally enter a
+version tag beginning with `v` (for example, `v1.0.0`); if left empty, the
+workflow uses the current date. The executable is built first, then the release
+job waits for approval in the `release` environment before publishing it.
 
-To publish a versioned, non-prerelease GitHub Release, create and push a
-version tag matching `v*`. For example:
-
-```powershell
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-The workflow attaches `KH1-ARD-Viewer.exe` to each release. The executable is
-framework-dependent and requires the .NET 10 Desktop Runtime for Windows x64.
+The workflow also keeps a downloadable build artifact on the Actions run. The
+published `KH1 ARD Viewer.exe` is framework-dependent and requires the .NET 10
+Desktop Runtime for Windows x64.
 
 ## How it works
 
