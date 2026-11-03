@@ -1,0 +1,11 @@
+Data/bin/
+Data/obj/
+_build/
+_publish/
+Extract/
+.vs/
+.vscode/
+Thumbs.db
+.DS_Store
+*.user
+*.suo

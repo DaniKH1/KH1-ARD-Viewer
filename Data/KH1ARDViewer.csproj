@@ -1,0 +1,17 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RootNamespace>KH1ARDViewer</RootNamespace>
+    <AssemblyName>KH1 ARD Viewer</AssemblyName>
+    <AssemblyTitle>KH1 ARD Viewer</AssemblyTitle>
+    <Company>KH1ARDViewer</Company>
+    <ApplicationIcon>KH1 ARD Viewer.ico</ApplicationIcon>
+    <Product>KH1 ARD Viewer</Product>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>
