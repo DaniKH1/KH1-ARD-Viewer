@@ -90,7 +90,7 @@ Select a model and choose **Export**. KH1 ARD Viewer writes a glTF 2.0 JSON file
 under the application directory:
 
 ```text
-Extract\<model>_extracted\<model>.gltf
+Extract\<ARD name>\<model>_extracted\<model>.gltf
 ```
 
 The geometry buffer is embedded in the `.gltf` file. Each decoded texture is

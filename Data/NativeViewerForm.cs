@@ -592,12 +592,9 @@ internal sealed class NativeViewerForm : Form
         if (_selected == null) return;
         try
         {
-            string safeName = string.Concat(_selected.Name.Select(c =>
-                Path.GetInvalidFileNameChars().Contains(c) || c is '/' or '\\' ? '_' : c)).Trim(' ', '.');
-            if (safeName.Length == 0) safeName = "model";
-            string directory = Path.Combine(AppContext.BaseDirectory, "Extract", safeName + "_extracted");
+            string directory = GetExportDirectory(_selected);
             Directory.CreateDirectory(directory);
-            string path = Path.Combine(directory, safeName + ".gltf");
+            string path = Path.Combine(directory, SanitizeFileName(_selected.Name, "model") + ".gltf");
             File.WriteAllText(path, NativeGltfExporter.Create(_selected, directory), new UTF8Encoding(false));
             _status.Text = $"Exported: {path}";
         }
@@ -606,6 +603,21 @@ internal sealed class NativeViewerForm : Form
             MessageBox.Show(this, error.Message, "Could not export model",
                 MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
+    }
+
+    private static string GetExportDirectory(ArdViewerModel model)
+    {
+        string archiveName = Path.GetFileNameWithoutExtension(model.Archive);
+        string safeArchiveName = SanitizeFileName(archiveName, "archive");
+        string safeModelName = SanitizeFileName(model.Name, "model");
+        return Path.Combine(AppContext.BaseDirectory, "Extract", safeArchiveName, safeModelName + "_extracted");
+    }
+
+    private static string SanitizeFileName(string name, string fallback)
+    {
+        string safeName = string.Concat(name.Select(c =>
+            Path.GetInvalidFileNameChars().Contains(c) || c is '/' or '\\' ? '_' : c)).Trim(' ', '.');
+        return safeName.Length == 0 ? fallback : safeName;
     }
 
     protected override void OnFormClosed(FormClosedEventArgs e)
