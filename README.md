@@ -3,7 +3,7 @@
 A lightweight Windows desktop application for browsing and viewing 3D models
 stored in Kingdom Hearts 1 `.ard` archives. KH1 ARD Viewer reads supported MDLS
 and MFA resources, renders the selected model with native OpenGL, previews its
-textures, and exports it as a self-contained glTF 2.0 file.
+textures, and exports it as a glTF 2.0 file with PNG textures alongside it.
 
 ## Features
 
@@ -16,7 +16,7 @@ textures, and exports it as a self-contained glTF 2.0 file.
   orientation.
 - View mesh, vertex, triangle, and texture counts for the selected model.
 - Browse decoded model textures and open a larger texture preview.
-- Export the selected model to a self-contained glTF 2.0 file.
+- Export the selected model to a glTF 2.0 file with separate PNG textures.
 - Start without loading or selecting an archive; the Export button appears
   only after a model is selected.
 
@@ -83,10 +83,10 @@ under the application directory:
 Extract\<model>_extracted\<model>.gltf
 ```
 
-The geometry buffer and decoded textures are embedded as data URIs, so the
-export is contained in the `.gltf` file rather than depending on separate
-buffer or image files. Model names are sanitized before they are used as
-directory and file names.
+The geometry buffer is embedded in the `.gltf` file. Each decoded texture is
+saved as a separate PNG beside it, and referenced by a relative filename in
+the glTF. Model names are sanitized before they are used as directory and file
+names.
 
 The application directory must be writable to export there. If Windows
 restricts writes to the folder where the viewer was installed, move the
@@ -147,7 +147,7 @@ To build and publish a release, open the repository's **Actions** tab, select
 **Release Manual Executable**, and choose **Run workflow**. Optionally enter a
 version tag beginning with `v` (for example, `v1.0.0`); if left empty, the
 workflow uses the current date. The executable is built first, then the release
-job waits for approval in the `release` environment before publishing it.
+is published automatically by the second job.
 
 The workflow also keeps a downloadable build artifact on the Actions run. The
 published `KH1 ARD Viewer.exe` is framework-dependent and requires the .NET 10
@@ -168,7 +168,8 @@ Desktop Runtime for Windows x64.
    Selecting a model updates the scene and the related model and texture
    information without opening a browser or starting a local web server.
 5. **Export** - The selected scene is converted to glTF 2.0, with its geometry
-   and texture data embedded in the resulting JSON file.
+   data embedded in the resulting JSON file and decoded textures written as
+   adjacent PNG files.
 
 ## Project layout
 

@@ -78,9 +78,6 @@ jobs:
     name: Publish release
     needs: build
     runs-on: ubuntu-latest
-    environment:
-      name: release
-      url: ${{ steps.publish.outputs.url }}
     permissions:
       contents: write
     steps:

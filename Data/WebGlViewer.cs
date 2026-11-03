@@ -261,17 +261,19 @@ function makeGltf(model){
  const binary=new Uint8Array(totalLength);let offset=0;for(const part of parts){binary.set(part,offset);offset+=part.length;}
  let binaryString='';for(let i=0;i<binary.length;i+=0x8000)binaryString+=String.fromCharCode(...binary.subarray(i,i+0x8000));
  const samplers=model.textures.map(texture=>({magFilter:9729,minFilter:9987,wrapS:texture.repeat?10497:33071,wrapT:texture.repeat?10497:33071}));
- const images=model.textures.map((texture,i)=>({name:texture.name||model.name+'_texture_'+String(i+1).padStart(2,'0'),uri:texturePreviewUrl(texture)}));
+ const textureFiles=model.textures.map((texture,i)=>({fileName:'texture_'+String(i+1).padStart(3,'0')+'.png',data:texturePreviewUrl(texture)}));
+ const images=textureFiles.map((file,i)=>({name:model.textures[i].name||file.fileName,uri:file.fileName}));
  const textures=model.textures.map((_,i)=>({sampler:i,source:i}));
  const materials=model.textures.map((_,i)=>({name:'Material '+(i+1),pbrMetallicRoughness:{baseColorTexture:{index:i},metallicFactor:0,roughnessFactor:1},alphaMode:'BLEND'}));
  materials.push({name:'Untextured',pbrMetallicRoughness:{baseColorFactor:[1,1,1,1],metallicFactor:0,roughnessFactor:1}});
- return JSON.stringify({asset:{version:'2.0',generator:'ARD Extractor'},scene:0,scenes:[{nodes:meshes.map((_,i)=>i)}],nodes:meshes.map((_,i)=>({mesh:i,name:meshes[i].name})),meshes,materials,images,textures,samplers,accessors,bufferViews,buffers:[{byteLength,uri:'data:application/octet-stream;base64,'+btoa(binaryString)}]});
+ return {gltf:JSON.stringify({asset:{version:'2.0',generator:'ARD Extractor'},scene:0,scenes:[{nodes:meshes.map((_,i)=>i)}],nodes:meshes.map((_,i)=>({mesh:i,name:meshes[i].name})),meshes,materials,images,textures,samplers,accessors,bufferViews,buffers:[{byteLength,uri:'data:application/octet-stream;base64,'+btoa(binaryString)}]}),textureFiles};
 }
 document.getElementById('export').addEventListener('click',async event=>{
  if(current<0)return;
  const button=event.currentTarget,model=models[current];button.disabled=true;status.style.color='';
  try{
-  const response=await fetch('/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({modelName:model.name,gltf:makeGltf(model)})});
+  const exported=makeGltf(model);
+  const response=await fetch('/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({modelName:model.name,gltf:exported.gltf,textures:exported.textureFiles})});
   if(!response.ok)throw new Error(await response.text());
   const result=await response.json();status.style.color='#9be0ad';status.textContent='Exported: '+result.path;
  }catch(error){status.textContent='Could not export '+model.name+': '+error.message;}

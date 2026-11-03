@@ -528,7 +528,7 @@ internal sealed class NativeViewerForm : Form
             string directory = Path.Combine(AppContext.BaseDirectory, "Extract", safeName + "_extracted");
             Directory.CreateDirectory(directory);
             string path = Path.Combine(directory, safeName + ".gltf");
-            File.WriteAllText(path, NativeGltfExporter.Create(_selected), new UTF8Encoding(false));
+            File.WriteAllText(path, NativeGltfExporter.Create(_selected, directory), new UTF8Encoding(false));
             _status.Text = $"Exported: {path}";
         }
         catch (Exception error)
@@ -961,7 +961,7 @@ internal sealed class NativeGlViewport : Panel
 
 internal static class NativeGltfExporter
 {
-    internal static string Create(ArdViewerModel model)
+    internal static string Create(ArdViewerModel model, string outputDirectory)
     {
         using var binary = new MemoryStream();
         var views = new List<Dictionary<string, object>>();
@@ -1036,10 +1036,11 @@ internal static class NativeGltfExporter
 
         byte[] data = binary.ToArray();
         string uri = "data:application/octet-stream;base64," + Convert.ToBase64String(data);
-        var images = model.Textures.Select(texture => new
+        var images = model.Textures.Select((texture, index) =>
         {
-            name = texture.Name,
-            uri = BitmapDataUri(texture)
+            string fileName = $"texture_{index + 1:D3}.png";
+            File.WriteAllBytes(Path.Combine(outputDirectory, fileName), BitmapPngBytes(texture));
+            return new { name = texture.Name, uri = fileName };
         }).ToArray();
         var samplers = model.Textures.Select(texture => new
         {
@@ -1091,12 +1092,12 @@ internal static class NativeGltfExporter
         return bytes;
     }
 
-    private static string BitmapDataUri(ArdViewerTexture texture)
+    private static byte[] BitmapPngBytes(ArdViewerTexture texture)
     {
         using Bitmap bitmap = MakeTextureBitmap(texture);
         using var stream = new MemoryStream();
         bitmap.Save(stream, ImageFormat.Png);
-        return "data:image/png;base64," + Convert.ToBase64String(stream.ToArray());
+        return stream.ToArray();
     }
 
     private static Bitmap MakeTextureBitmap(ArdViewerTexture texture)
