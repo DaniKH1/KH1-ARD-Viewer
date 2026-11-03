@@ -116,14 +116,14 @@ open successfully even if it contains no usable MDLS or MFA models.
 The complete source project and icon assets are in `Data\`. Building requires
 the .NET 10 SDK for Windows x64.
 
-To build and launch the viewer, run:
+To build the viewer without launching it, run:
 
 ```text
 Build.bat
 ```
 
-To build the executable without automatically starting the application, open a
-terminal in this folder and run:
+Alternatively, to build into a separate `_publish` folder, open a terminal in
+this folder and run:
 
 ```powershell
 dotnet publish .\Data\KH1ARDViewer.csproj `

@@ -108,7 +108,10 @@ internal static class ArdViewer
         int start = offsets[ResourceListIndex];
         int end = Math.Min(offsets[ResourceListIndex + 1], data.Length);
         int length = end - start;
-        if (start < 0 || length <= 0 || length % NameSize != 0)
+        if (start < 0 || start > data.Length || length < 0)
+            throw new InvalidOperationException("ARD resource-list entry is invalid.");
+        if (length == 0) return new List<string>();
+        if (length % NameSize != 0)
             throw new InvalidOperationException("ARD resource-list entry is invalid.");
 
         var resources = new List<string>(length / NameSize);

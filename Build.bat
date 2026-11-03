@@ -45,6 +45,6 @@ if exist "%BUILD_DIR%" rmdir /s /q "%BUILD_DIR%"
 if exist "%~dp0Data\bin" rmdir /s /q "%~dp0Data\bin"
 if exist "%~dp0Data\obj" rmdir /s /q "%~dp0Data\obj"
 
-start "" "%~dp0KH1 ARD Viewer.exe"
+echo Build complete: "%~dp0KH1 ARD Viewer.exe"
 
 endlocal

@@ -295,6 +295,8 @@ internal sealed class NativeViewerForm : Form
         if (paths.Length == 0)
         {
             _status.Text = "No .ard files were found.";
+            if (_settingsWarning is not null)
+                _status.Text += $" · {_settingsWarning}";
             return;
         }
         await LoadArchivesAsync(paths);
@@ -401,14 +403,14 @@ internal sealed class NativeViewerForm : Form
         }
 
         _status.Text = $"{loadedCount} / {paths.Length} Files Loaded";
-        if (_settingsWarning is not null)
-            _status.Text += $" · {_settingsWarning}";
         if (failures.Count > 0)
         {
-            _status.Text = $"{loadedCount} / {paths.Length} Files Loaded ({failures.Count} failed).";
+            _status.Text += $" ({failures.Count} failed).";
             MessageBox.Show(this, string.Join(Environment.NewLine, failures), "Could not open some ARD files",
                 MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
+        if (_settingsWarning is not null)
+            _status.Text += $" · {_settingsWarning}";
     }
 
     private void AddArchive(string path, List<ArdViewerModel> loaded)
@@ -428,8 +430,17 @@ internal sealed class NativeViewerForm : Form
             _nodes[model] = node;
             _allModels.Add(model);
         }
-        if (archiveNode.Nodes.Count != 0)
+        if (archiveNode.Nodes.Count == 0)
+        {
+            archiveNode.Nodes.Add(new TreeNode("No supported MDLS or MFA models found")
+            {
+                ForeColor = Color.FromArgb(126, 137, 152)
+            });
+        }
+        else
+        {
             archiveNode.Text = $"▸ {archiveName}";
+        }
         _models.Nodes.Add(archiveNode);
     }
 
