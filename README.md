@@ -1,3 +1,9 @@
+### AI Assistance Disclosure
+
+This project was developed with the assistance of AI tools, which were used throughout the development process for tasks such as code generation, debugging, problem-solving, and technical research.
+
+The overall concept, project direction, feature requirements, testing, and final implementation decisions were guided and reviewed by the developer. AI served as a development aid, while responsibility for the project, its design, and its final results remains with the author.
+
 # KH1 ARD Viewer
 
 A lightweight Windows desktop application for browsing and viewing 3D models
@@ -224,12 +230,6 @@ Confirm that the application folder is writable. The output is created in the
 
 KH1 ARD Viewer is a model inspection and export tool. It does not edit ARD
 archives, modify game data, or provide a full game scene or animation editor.
-
-## AI disclosure
-
-This tool was made possible with the assistance of artificial intelligence
-during development. Its code and output have been reviewed and tested by the
-project's author.
 
 ## License
 
