@@ -121,12 +121,14 @@ needed by the renderer, while MFA UV coordinates and decoded texture rows are
 preserved. Unsupported or malformed resources may be skipped; an archive can
 open successfully even if it contains no usable MDLS or MFA models.
 
-MSET playback is currently disabled. The previous preview treated static
-transform records as a complete pose and blended them artificially; that did
-not reproduce the original animation and could place parts of a model
-incorrectly. MSET data will remain unavailable in the viewer until its
-animation channels and timing are decoded and validated against the source
-format.
+The viewer decodes embedded MMTN references against the containing MDLS
+skeleton, including supported type-1 through type-4 animation curves, their
+keyframe times, values, tangents, and encoded frame rate. **Play/Pause**
+evaluates those keyframes over the clip's actual timeline; it does not cycle or
+blend between unrelated static poses. **Apply MSET pose** still cycles decoded
+references, and **Restore base pose** returns to the bind pose. Unsupported curve
+key types are skipped and reported. Exports preserve the selected pose and
+armature, including the current animation frame when exporting during playback.
 
 ## Build from source
 

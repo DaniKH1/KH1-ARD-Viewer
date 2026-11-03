@@ -13,12 +13,14 @@ internal sealed class ArdViewerModel
     public List<ArdViewerTexture> Textures { get; set; } = new();
     public List<ArdViewerMesh> Meshes { get; set; } = new();
     public List<ArdViewerJoint> Joints { get; set; } = new();
+    public List<ArdViewerMsetSection> MsetSections { get; set; } = new();
 }
 
 internal sealed class ArdViewerJoint
 {
     public string Name { get; set; } = "";
     public int ParentIndex { get; set; } = -1;
+    public float[] TransformChannels { get; set; } = Array.Empty<float>();
     public float[] LocalMatrix { get; set; } = Array.Empty<float>();
     public float[] InverseBindMatrix { get; set; } = Array.Empty<float>();
 }
@@ -69,6 +71,9 @@ internal static class ArdViewer
                 byte[] slot = data.AsSpan(blob.Offset, blob.Length).ToArray();
                 MdlsModel parsed = MdlsParser.Parse(slot);
                 ArdViewerModel model = ConvertMdls(parsed, ModelSlotName(names, blob.Slot));
+                model.MsetSections.AddRange(Kh1MsetParser.ReadEmbedded(slot, parsed.Joints.Count, blob.Slot));
+                foreach (ArdViewerMsetSection section in model.MsetSections)
+                    section.JointLocalMatrices = BuildMsetJointLocals(model.Joints, section, 0);
                 if (model.Meshes.Count != 0) models.Add(model);
             }
             catch (Exception error)
@@ -216,6 +221,12 @@ internal static class ArdViewer
             {
                 Name = $"{name} / joint {i}",
                 ParentIndex = parent >= 0 && parent < i ? parent : -1,
+                TransformChannels =
+                [
+                    source.Joints[i].ScaleX, source.Joints[i].ScaleY, source.Joints[i].ScaleZ,
+                    source.Joints[i].RotateX, source.Joints[i].RotateY, source.Joints[i].RotateZ,
+                    source.Joints[i].TranslateX, source.Joints[i].TranslateY, source.Joints[i].TranslateZ
+                ],
                 LocalMatrix = ToMatrixArray(inverseBasis * jointLocals[i] * basis),
                 InverseBindMatrix = ToMatrixArray(inverseBind)
             });
@@ -270,11 +281,48 @@ internal static class ArdViewer
     }
 
     private static Matrix4x4 BuildJointLocal(MdlsJoint joint) =>
-        Matrix4x4.CreateScale(joint.ScaleX, joint.ScaleY, joint.ScaleZ) *
-        Matrix4x4.CreateRotationX(joint.RotateX) *
-        Matrix4x4.CreateRotationY(joint.RotateY) *
-        Matrix4x4.CreateRotationZ(joint.RotateZ) *
-        Matrix4x4.CreateTranslation(joint.TranslateX, joint.TranslateY, joint.TranslateZ);
+        BuildJointLocal(joint.ScaleX, joint.ScaleY, joint.ScaleZ,
+            joint.RotateX, joint.RotateY, joint.RotateZ,
+            joint.TranslateX, joint.TranslateY, joint.TranslateZ);
+
+    private static Matrix4x4 BuildJointLocal(
+        float scaleX, float scaleY, float scaleZ,
+        float rotateX, float rotateY, float rotateZ,
+        float translateX, float translateY, float translateZ) =>
+        Matrix4x4.CreateScale(scaleX, scaleY, scaleZ) *
+        Matrix4x4.CreateRotationX(rotateX) *
+        Matrix4x4.CreateRotationY(rotateY) *
+        Matrix4x4.CreateRotationZ(rotateZ) *
+        Matrix4x4.CreateTranslation(translateX, translateY, translateZ);
+
+    internal static List<float[]> BuildMsetJointLocals(
+        IReadOnlyList<ArdViewerJoint> joints,
+        ArdViewerMsetSection section,
+        float frame)
+    {
+        var channelValues = joints
+            .Select(joint => (float[])joint.TransformChannels.Clone())
+            .ToArray();
+        foreach (ArdViewerMsetChannel channel in section.Channels)
+            channelValues[channel.Joint][channel.Channel - 1] = channel.Value;
+        foreach (ArdViewerMsetCurve curve in section.Curves)
+            channelValues[curve.Joint][curve.Channel - 1] = curve.Sample(frame);
+
+        Matrix4x4 basis = Matrix4x4.CreateScale(-0.01f, 0.01f, 0.01f);
+        Matrix4x4.Invert(basis, out Matrix4x4 inverseBasis);
+        var matrices = new List<float[]>(joints.Count);
+        for (int index = 0; index < joints.Count; index++)
+        {
+            float[] values = channelValues[index];
+            Matrix4x4 local = BuildJointLocal(
+                values[0], values[1], values[2],
+                values[3], values[4], values[5],
+                values[6], values[7], values[8]);
+            matrices.Add(ToMatrixArray(inverseBasis * local * basis));
+        }
+
+        return matrices;
+    }
 
     private static float[] ToMatrixArray(Matrix4x4 matrix) =>
     [

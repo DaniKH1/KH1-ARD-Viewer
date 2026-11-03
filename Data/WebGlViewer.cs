@@ -37,9 +37,11 @@ select{font:inherit;background:#181d25;border:1px solid #4b5668;color:#edf2f8;bo
 #stats{position:absolute;top:16px;right:16px;padding:10px 12px;background:#111d;border:1px solid #303846;border-radius:5px;color:#c5cfdd;line-height:1.65;font-size:12px;white-space:pre-line;pointer-events:none}
 main{position:relative;min-width:0;min-height:0}canvas{width:100%;height:100%;display:block;touch-action:none}
 #hint{position:absolute;bottom:15px;left:16px;background:#111b;color:#c5cfdd;padding:8px 11px;border-radius:5px;pointer-events:none}
-#export,#reset{position:absolute;z-index:2;display:grid;place-items:center;background:#181d25dd;border:1px solid #4b5668;box-shadow:0 4px 16px #0006}
+#export,#reset,#mset-pose,#mset-play{position:absolute;z-index:2;display:grid;place-items:center;background:#181d25dd;border:1px solid #4b5668;box-shadow:0 4px 16px #0006}
 #export{top:16px;left:16px;padding:9px 14px}
-#export:hover,#reset:hover{border-color:#9bbff2;background:#252d39}
+#export:hover,#reset:hover,#mset-pose:hover,#mset-play:hover{border-color:#9bbff2;background:#252d39}
+#mset-pose{bottom:15px;right:192px;padding:9px 14px}
+#mset-play{bottom:15px;right:360px;width:88px;padding:9px 14px}
 #reset{right:16px;bottom:15px;padding:9px 14px}
 #texture-modal{position:fixed;z-index:5;inset:0;display:grid;place-items:center;background:#05070bcc;padding:24px}
 #texture-modal[hidden]{display:none}
@@ -67,7 +69,7 @@ main{position:relative;min-width:0;min-height:0}canvas{width:100%;height:100%;di
 </section>
 <div id="error"></div>
 </aside>
-<main><canvas id="view"></canvas><button id="export" title="Export the selected model to glTF" hidden disabled>Export</button><button id="reset" title="Reset camera">Reset camera</button><div id="stats"></div><div id="hint">Drag: orbit · Wheel: zoom · Shift or middle-drag: pan</div><div id="texture-modal" hidden><div id="texture-preview"><img id="texture-large" alt=""><div id="texture-caption"></div></div></div></main>
+<main><canvas id="view"></canvas><button id="export" title="Export the selected model to glTF" hidden disabled>Export</button><button id="mset-pose" title="Apply a decoded MSET pose" hidden>Apply MSET pose</button><button id="mset-play" title="Play the decoded MSET keyframe animation" hidden>Play</button><button id="reset" title="Reset camera">Reset camera</button><div id="stats"></div><div id="hint">Drag: orbit · Wheel: zoom · Shift or middle-drag: pan</div><div id="texture-modal" hidden><div id="texture-preview"><img id="texture-large" alt=""><div id="texture-caption"></div></div></div></main>
 <script>
 const models=__ARD_DATA__;
 const canvas=document.getElementById('view'),gl=canvas.getContext('webgl2',{antialias:true,alpha:false});
@@ -92,7 +94,8 @@ const stats=document.getElementById('stats'),archiveList=document.getElementById
 const archives=new Map(),expandedArchives=new Set();
 const initialArchive='__ARD_TITLE__';
 if(models.length)archives.set(initialArchive,models);
-let gpu=[],current=-1,center=[0,0,0],radius=1,theta=.65,phi=1.05,distance=4,pan=[0,0,0],drag=null,grid=null;
+let gpu=[],current=-1,currentMsetSection=-1,currentMsetFrame=0,center=[0,0,0],radius=1,theta=.65,phi=1.05,distance=4,pan=[0,0,0],drag=null,grid=null,msetPlaybackTimer=null,msetPlaybackSection=-1,msetPlaybackStart=null;
+function stopMsetPlayback(){if(msetPlaybackTimer!==null){cancelAnimationFrame(msetPlaybackTimer);msetPlaybackTimer=null;}msetPlaybackSection=-1;msetPlaybackStart=null;document.getElementById('mset-play').textContent='Play';}
 function buffer(target,data){const b=gl.createBuffer();gl.bindBuffer(target,b);gl.bufferData(target,data,gl.STATIC_DRAW);return b;}
 function release(){for(const g of gpu){gl.deleteBuffer(g.p);gl.deleteBuffer(g.c);gl.deleteBuffer(g.uv);gl.deleteBuffer(g.i);if(g.texture)gl.deleteTexture(g.texture);}gpu=[];}
 const texturePreviewCache=new WeakMap();
@@ -130,7 +133,7 @@ function rebuildGrid(floorY){
  grid={p:buffer(gl.ARRAY_BUFFER,new Float32Array(positions)),c:buffer(gl.ARRAY_BUFFER,new Uint8Array(colors)),uv:buffer(gl.ARRAY_BUFFER,new Float32Array(positions.length/3*2)),count:positions.length/3};
 }
 function loadModel(index){
- release();current=index;const model=models[index];if(!model)return;
+ stopMsetPlayback();release();current=index;const model=models[index];if(!model)return;
  let lo=[Infinity,Infinity,Infinity],hi=[-Infinity,-Infinity,-Infinity],vertices=0,triangles=0,textures=[];
  for(const t of model.textures){const raw=Uint8Array.from(atob(t.rgba),c=>c.charCodeAt(0)),tex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tex);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,t.width,t.height,0,gl.RGBA,gl.UNSIGNED_BYTE,raw);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,t.repeat?gl.REPEAT:gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,t.repeat?gl.REPEAT:gl.CLAMP_TO_EDGE);gl.generateMipmap(gl.TEXTURE_2D);textures.push(tex);}
  for(const m of model.meshes){
@@ -138,15 +141,107 @@ function loadModel(index){
   if(model.format==='MDLS')for(let i=1;i<uv.length;i+=2)uv[i]=1-uv[i];
   for(let i=0;i<pos.length;i+=3){for(let a=0;a<3;a++){lo[a]=Math.min(lo[a],pos[i+a]);hi[a]=Math.max(hi[a],pos[i+a]);}}
   vertices+=pos.length/3;triangles+=ind.length/3;
-  gpu.push({p:buffer(gl.ARRAY_BUFFER,pos),positions:pos,basePositions:pos,c:buffer(gl.ARRAY_BUFFER,col),uv:buffer(gl.ARRAY_BUFFER,uv),i:buffer(gl.ELEMENT_ARRAY_BUFFER,ind),count:ind.length,texture:m.texture>=0?textures[m.texture]:null});
+  gpu.push({p:buffer(gl.ARRAY_BUFFER,pos),positions:pos,basePositions:new Float32Array(pos),jointIds:m.jointIds||[],c:buffer(gl.ARRAY_BUFFER,col),uv:buffer(gl.ARRAY_BUFFER,uv),i:buffer(gl.ELEMENT_ARRAY_BUFFER,ind),count:ind.length,texture:m.texture>=0?textures[m.texture]:null});
  }
  if(!Number.isFinite(lo[0]))lo=[-1,-1,-1],hi=[1,1,1];
  center=lo.map((v,i)=>(v+hi[i])/2);radius=Math.max(.01,Math.hypot(hi[0]-lo[0],hi[1]-lo[1],hi[2]-lo[2])/2);distance=radius*2.8;pan=[0,0,0];
  rebuildGrid(lo[1]-radius*.015);
- stats.textContent='Meshes: '+model.meshes.length+'\nVertices: '+vertices.toLocaleString()+'\nTriangles: '+triangles.toLocaleString()+'\nTextures: '+model.textures.length;
+ currentMsetSection=-1;currentMsetFrame=0;
+ const usableMsets=(model.msetSections||[]).filter(section=>(section.channels.length||section.curves.length)&&section.jointLocalMatrices?.length===model.joints.length);
+ const playableMsets=usableMsets.filter(section=>section.curves.length&&section.frameEnd>0&&section.framesPerSecond>0);
+ const msetChannels=(model.msetSections||[]).reduce((total,section)=>total+section.channels.length,0);
+ const msetCurves=(model.msetSections||[]).reduce((total,section)=>total+section.curves.length,0);
+ stats.textContent='Meshes: '+model.meshes.length+'\nVertices: '+vertices.toLocaleString()+'\nTriangles: '+triangles.toLocaleString()+'\nTextures: '+model.textures.length+'\nMSET data: '+(model.msetSections||[]).length+' sections / '+msetChannels+' channels / '+msetCurves+' curves';
+ const poseButton=document.getElementById('mset-pose');poseButton.hidden=usableMsets.length===0;poseButton.textContent='Apply MSET pose';
+ document.getElementById('mset-play').hidden=playableMsets.length===0;
  status.textContent='';const exportButton=document.getElementById('export');exportButton.disabled=false;exportButton.hidden=false;textureModal.hidden=true;renderTextures(model);renderArchives();
  draw();
 }
+function multiplyRowMajor(a,b){
+ const result=new Array(16).fill(0);
+ for(let row=0;row<4;row++)for(let col=0;col<4;col++)for(let k=0;k<4;k++)result[row*4+col]+=a[row*4+k]*b[k*4+col];
+ return result;
+}
+function transformPoint(point,matrix){
+ return [
+  point[0]*matrix[0]+point[1]*matrix[4]+point[2]*matrix[8]+matrix[12],
+  point[0]*matrix[1]+point[1]*matrix[5]+point[2]*matrix[9]+matrix[13],
+  point[0]*matrix[2]+point[1]*matrix[6]+point[2]*matrix[10]+matrix[14]
+ ];
+}
+function setMsetPose(sectionIndex){
+ setMsetAnimationFrame(sectionIndex,0);
+}
+function sampleMsetCurve(curve,frame){
+ const keys=curve.keys;if(!keys?.length)return 0;
+ if(frame<=keys[0].frame)return keys[0].value;
+ for(let i=1;i<keys.length;i++){
+  const previous=keys[i-1],next=keys[i];if(frame>next.frame)continue;
+  const duration=next.frame-previous.frame;if(duration<=0)return next.value;
+  const t=Math.max(0,Math.min(1,(frame-previous.frame)/duration)),t2=t*t,t3=t2*t;
+  return (2*t3-3*t2+1)*previous.value+(t3-2*t2+t)*duration*previous.outTangent+
+   (-2*t3+3*t2)*next.value+(t3-t2)*duration*next.inTangent;
+ }
+ return keys[keys.length-1].value;
+}
+function buildMsetLocals(model,section,frame){
+ const values=model.joints.map(joint=>joint.transformChannels.slice());
+ for(const channel of section.channels)values[channel.joint][channel.channel-1]=channel.value;
+ for(const curve of section.curves)values[curve.joint][curve.channel-1]=sampleMsetCurve(curve,frame);
+ const basis=[-.01,0,0,0,0,.01,0,0,0,0,.01,0,0,0,0,1];
+ const inverseBasis=[-100,0,0,0,0,100,0,0,0,0,100,0,0,0,0,1];
+ return values.map(v=>{
+  const [sx,sy,sz,rx,ry,rz,tx,ty,tz]=v,cx=Math.cos(rx),sxR=Math.sin(rx),cy=Math.cos(ry),syR=Math.sin(ry),cz=Math.cos(rz),szR=Math.sin(rz);
+  const scale=[sx,0,0,0,0,sy,0,0,0,0,sz,0,0,0,0,1];
+  const rotX=[1,0,0,0,0,cx,sxR,0,0,-sxR,cx,0,0,0,0,1];
+  const rotY=[cy,0,-syR,0,0,1,0,0,syR,0,cy,0,0,0,0,1];
+  const rotZ=[cz,szR,0,0,-szR,cz,0,0,0,0,1,0,0,0,0,1];
+  const translate=[1,0,0,0,0,1,0,0,0,0,1,0,tx,ty,tz,1];
+  let local=multiplyRowMajor(scale,rotX);local=multiplyRowMajor(local,rotY);local=multiplyRowMajor(local,rotZ);
+  local=multiplyRowMajor(local,translate);
+  return multiplyRowMajor(multiplyRowMajor(inverseBasis,local),basis);
+ });
+}
+function setMsetAnimationFrame(sectionIndex,frame){
+ if(current<0)return;
+ const model=models[current],section=sectionIndex>=0?model.msetSections[sectionIndex]:null;
+ const world=section?buildMsetWorld(model,section,frame):null;
+ for(const mesh of gpu){
+  mesh.positions.set(mesh.basePositions);
+  if(world&&mesh.jointIds.length===mesh.positions.length/3){
+   for(let vertex=0;vertex<mesh.jointIds.length;vertex++){
+    const joint=mesh.jointIds[vertex];if(joint<0||joint>=model.joints.length)continue;
+    const base=mesh.basePositions.subarray(vertex*3,vertex*3+3);
+    const posed=transformPoint(base,
+      multiplyRowMajor(model.joints[joint].inverseBindMatrix,world[joint]));
+    mesh.positions.set(posed,vertex*3);
+   }
+  }
+  gl.bindBuffer(gl.ARRAY_BUFFER,mesh.p);gl.bufferData(gl.ARRAY_BUFFER,mesh.positions,gl.STATIC_DRAW);
+ }
+ currentMsetSection=sectionIndex;currentMsetFrame=frame;
+ const button=document.getElementById('mset-pose');
+ const sections=model.msetSections.map((item,index)=>({item,index}))
+  .filter(entry=>(entry.item.channels.length||entry.item.curves.length)&&entry.item.jointLocalMatrices?.length===model.joints.length);
+ const position=sections.findIndex(entry=>entry.index===sectionIndex);
+ button.textContent=position>=0&&(position+1<sections.length||msetPlaybackTimer!==null)
+  ?`MSET pose ${position+1}/${sections.length} · Next`:sectionIndex>=0?'Restore base pose':'Apply MSET pose';
+ draw();
+}
+function buildMsetWorld(model,section,frame){
+ const world=[],locals=buildMsetLocals(model,section,frame);
+ for(let i=0;i<model.joints.length;i++){
+  const local=locals[i],parent=model.joints[i].parentIndex;
+  world[i]=parent>=0&&parent<i?multiplyRowMajor(local,world[parent]):local;
+ }
+ return world;
+}
+function getUsableMsetSections(model){return model.msetSections.map((section,index)=>({section,index}))
+ .filter(item=>(item.section.channels.length||item.section.curves.length)&&item.section.jointLocalMatrices?.length===model.joints.length)
+ .map(item=>item.index);}
+function getUsableMsetAnimations(model){return model.msetSections.map((section,index)=>({section,index}))
+ .filter(item=>item.section.curves.length&&item.section.frameEnd>0&&item.section.framesPerSecond>0&&item.section.jointLocalMatrices?.length===model.joints.length)
+ .map(item=>item.index);}
 function perspective(fovy,aspect,near,far){const f=1/Math.tan(fovy/2),nf=1/(near-far);return new Float32Array([f/aspect,0,0,0,0,f,0,0,0,0,(far+near)*nf,-1,0,0,2*far*near*nf,0]);}
 function lookAt(eye,target){let z=norm(sub(eye,target)),x=norm(cross([0,1,0],z)),y=cross(z,x);return new Float32Array([x[0],y[0],z[0],0,x[1],y[1],z[1],0,x[2],y[2],z[2],0,-dot(x,eye),-dot(y,eye),-dot(z,eye),1]);}
 function multiply(a,b){const o=new Float32Array(16);for(let c=0;c<4;c++)for(let r=0;r<4;r++)o[c*4+r]=a[r]*b[c*4]+a[4+r]*b[c*4+1]+a[8+r]*b[c*4+2]+a[12+r]*b[c*4+3];return o;}
@@ -232,7 +327,7 @@ function calculateNormals(positions,indices){
  for(let i=0;i<normals.length;i+=3){const n=norm([normals[i],normals[i+1],normals[i+2]]);normals.set(n,i);}
  return normals;
 }
-function makeGltf(model){
+function makeGltf(model,msetSectionIndex=-1,msetFrame=0){
  const parts=[],bufferViews=[],accessors=[];let byteLength=0;
  function addAccessor(data,componentType,type,count,target,normalized=false,min,max){
   const padding=(4-byteLength%4)%4;if(padding){parts.push(new Uint8Array(padding));byteLength+=padding;}
@@ -275,9 +370,11 @@ function makeGltf(model){
  const nodes=meshes.map((mesh,i)=>({mesh:i,name:model.meshes[i].name,...(meshUsesSkin[i]?{skin:0}:{})}));
  const sceneNodes=nodes.map((_,i)=>i),skins=[];
  if(meshUsesSkin.some(Boolean)){
+  const msetSection=msetSectionIndex>=0?model.msetSections[msetSectionIndex]:null;
+  const msetLocals=msetSection?buildMsetLocals(model,msetSection,msetFrame):null;
   const boneOffset=nodes.length,boneNodes=model.joints.map((_,i)=>boneOffset+i);
   for(let i=0;i<model.joints.length;i++){
-   const joint=model.joints[i],matrix=joint.localMatrix;
+   const joint=model.joints[i],matrix=msetLocals?.length===model.joints.length?msetLocals[i]:joint.localMatrix;
    const children=model.joints.map((candidate,index)=>candidate.parentIndex===i?boneNodes[index]:-1).filter(index=>index>=0);
    nodes.push({name:joint.name,matrix,...(children.length?{children}:{})});
    if(joint.parentIndex<0)sceneNodes.push(boneNodes[i]);
@@ -304,12 +401,39 @@ document.getElementById('export').addEventListener('click',async event=>{
  if(current<0)return;
  const button=event.currentTarget,model=models[current];button.disabled=true;status.style.color='';
  try{
-  const exported=makeGltf(model);
+  const exported=makeGltf(model,currentMsetSection,currentMsetFrame);
   const response=await fetch('/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({modelName:model.name,gltf:exported.gltf,textures:exported.textureFiles})});
   if(!response.ok)throw new Error(await response.text());
   const result=await response.json();status.style.color='#9be0ad';status.textContent='Exported: '+result.path;
  }catch(error){status.textContent='Could not export '+model.name+': '+error.message;}
  finally{button.disabled=false;}
+});
+document.getElementById('mset-pose').addEventListener('click',()=>{
+ if(current<0)return;
+ if(msetPlaybackTimer!==null)stopMsetPlayback();
+ const sections=getUsableMsetSections(models[current]);
+ if(!sections.length)return;
+ const position=sections.indexOf(currentMsetSection);
+ setMsetPose(position<0?sections[0]:position+1<sections.length?sections[position+1]:-1);
+});
+document.getElementById('mset-play').addEventListener('click',()=>{
+ if(msetPlaybackTimer!==null){stopMsetPlayback();return;}
+ const button=document.getElementById('mset-play'),model=models[current];
+ if(!model)return;
+ const sections=getUsableMsetAnimations(model);
+ if(!sections.length)return;
+ msetPlaybackSection=sections.includes(currentMsetSection)?currentMsetSection:sections[0];
+ msetPlaybackStart=null;currentMsetFrame=0;
+ button.textContent='Pause';
+ const advance=timestamp=>{
+  if(msetPlaybackTimer===null||current<0)return;
+  if(msetPlaybackStart===null)msetPlaybackStart=timestamp;
+  const section=model.msetSections[msetPlaybackSection];
+  currentMsetFrame=((timestamp-msetPlaybackStart)*section.framesPerSecond/1000)%section.frameEnd;
+  setMsetAnimationFrame(msetPlaybackSection,currentMsetFrame);
+  msetPlaybackTimer=requestAnimationFrame(advance);
+ };
+ msetPlaybackTimer=requestAnimationFrame(advance);
 });
 document.getElementById('open-ard').addEventListener('click',()=>document.getElementById('ard-file').click());
 document.getElementById('open-folder').addEventListener('click',()=>document.getElementById('ard-folder').click());

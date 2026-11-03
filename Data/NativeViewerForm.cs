@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Drawing.Imaging;
 using System.Numerics;
 using System.Runtime.InteropServices;
@@ -18,6 +19,9 @@ internal sealed class NativeViewerForm : Form
     private readonly Label _loadProgress = new();
     private readonly Label _stats = new();
     private readonly NativeActionButton _export = new();
+    private readonly NativeActionButton _msetPose = new();
+    private readonly NativeActionButton _msetPlay = new();
+    private readonly System.Windows.Forms.Timer _msetPlaybackTimer = new() { Interval = 16 };
     private readonly Dictionary<ArdViewerModel, TreeNode> _nodes = new();
     private readonly List<ArdViewerModel> _allModels = new();
     private System.Drawing.Icon? _applicationIcon;
@@ -25,6 +29,9 @@ internal sealed class NativeViewerForm : Form
     private string? _lastFolder;
     private string? _settingsWarning;
     private ArdViewerModel? _selected;
+    private int _activeMsetSection = -1;
+    private float _activeMsetFrame;
+    private long _msetPlaybackStart;
 
     private static string LastFolderSettingsPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -202,7 +209,7 @@ internal sealed class NativeViewerForm : Form
         _viewport.Dock = DockStyle.Fill;
         stage.Controls.Add(_viewport);
 
-        _stats.Size = new Size(116, 82);
+        _stats.Size = new Size(196, 100);
         _stats.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         _stats.Location = new Point(Math.Max(0, stage.ClientSize.Width - _stats.Width - 12), 12);
         _stats.BackColor = Color.FromArgb(24, 29, 37);
@@ -227,6 +234,30 @@ internal sealed class NativeViewerForm : Form
         stage.Controls.Add(_export);
         _export.BringToFront();
 
+        _msetPose.Text = "Apply MSET pose";
+        StyleButton(_msetPose);
+        _msetPose.Size = new Size(160, 38);
+        _msetPose.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+        _msetPose.Location = new Point(stage.ClientSize.Width - _msetPose.Width - 190, stage.ClientSize.Height - _msetPose.Height - 14);
+        _msetPose.Anchor = AnchorStyles.Right | AnchorStyles.Bottom;
+        _msetPose.Visible = false;
+        _msetPose.Click += (_, _) => ToggleMsetPose();
+        stage.Controls.Add(_msetPose);
+        _msetPose.BringToFront();
+
+        _msetPlay.Text = "Play";
+        StyleButton(_msetPlay);
+        _msetPlay.Size = new Size(88, 38);
+        _msetPlay.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+        _msetPlay.Location = new Point(stage.ClientSize.Width - _msetPose.Width - _msetPlay.Width - 198,
+            stage.ClientSize.Height - _msetPlay.Height - 14);
+        _msetPlay.Anchor = AnchorStyles.Right | AnchorStyles.Bottom;
+        _msetPlay.Visible = false;
+        _msetPlay.Click += (_, _) => ToggleMsetPlayback();
+        stage.Controls.Add(_msetPlay);
+        _msetPlay.BringToFront();
+        _msetPlaybackTimer.Tick += (_, _) => AdvanceMsetPose();
+
         NativeActionButton reset = new()
         {
             Text = "Reset camera",
@@ -239,7 +270,14 @@ internal sealed class NativeViewerForm : Form
         reset.Click += (_, _) => _viewport.ResetCamera();
         stage.Controls.Add(reset);
         reset.BringToFront();
-        stage.Resize += (_, _) => reset.Location = new Point(stage.ClientSize.Width - reset.Width - 14, stage.ClientSize.Height - reset.Height - 14);
+        stage.Resize += (_, _) =>
+        {
+            reset.Location = new Point(stage.ClientSize.Width - reset.Width - 14, stage.ClientSize.Height - reset.Height - 14);
+            _msetPose.Location = new Point(stage.ClientSize.Width - reset.Width - _msetPose.Width - 28,
+                stage.ClientSize.Height - _msetPose.Height - 14);
+            _msetPlay.Location = new Point(stage.ClientSize.Width - reset.Width - _msetPose.Width - _msetPlay.Width - 36,
+                stage.ClientSize.Height - _msetPlay.Height - 14);
+        };
     }
 
     private static Button MakeButton(string text)
@@ -453,14 +491,20 @@ internal sealed class NativeViewerForm : Form
 
     private void SelectModel(ArdViewerModel model)
     {
+        StopMsetPlayback();
         _selected = model;
+        _activeMsetSection = -1;
+        _activeMsetFrame = 0;
         _viewport.SetModel(model);
         _export.Enabled = true;
         _export.Visible = true;
         _stats.Visible = true;
         int vertices = model.Meshes.Sum(mesh => mesh.Positions.Length / 3);
         int triangles = model.Meshes.Sum(mesh => mesh.Indices.Length / 3);
-        _stats.Text = $"Meshes: {model.Meshes.Count}\r\nVertices: {vertices:N0}\r\nTriangles: {triangles:N0}\r\nTextures: {model.Textures.Count}";
+        int msetChannels = model.MsetSections.Sum(section => section.Channels.Count);
+        int msetCurves = model.MsetSections.Sum(section => section.Curves.Count);
+        _stats.Text = $"Meshes: {model.Meshes.Count}\r\nVertices: {vertices:N0}\r\nTriangles: {triangles:N0}\r\nTextures: {model.Textures.Count}\r\nMSET data: {model.MsetSections.Count} sections / {msetChannels} channels / {msetCurves} curves";
+        UpdateMsetPoseButton();
         _status.Text = $"{model.Format} / {model.Name} · {model.Archive}";
         _textures.Controls.Clear();
         for (int i = 0; i < model.Textures.Count; i++)
@@ -596,7 +640,7 @@ internal sealed class NativeViewerForm : Form
             Directory.CreateDirectory(directory);
             string path = Path.Combine(directory, SanitizeFileName(_selected.Name, "model") + ".gltf");
             File.WriteAllText(path, NativeGltfExporter.Create(
-                _selected, directory), new UTF8Encoding(false));
+                _selected, directory, _activeMsetSection, _activeMsetFrame), new UTF8Encoding(false));
             _status.Text = $"Exported: {path}";
         }
         catch (Exception error)
@@ -604,6 +648,118 @@ internal sealed class NativeViewerForm : Form
             MessageBox.Show(this, error.Message, "Could not export model",
                 MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
+    }
+
+    private void ToggleMsetPose()
+    {
+        if (_selected == null) return;
+        if (_msetPlaybackTimer.Enabled) StopMsetPlayback();
+        int[] sections = GetUsableMsetSections();
+        if (sections.Length == 0) return;
+
+        int current = Array.IndexOf(sections, _activeMsetSection);
+        _activeMsetSection = current < 0 ? sections[0] : current + 1 < sections.Length ? sections[current + 1] : -1;
+        _activeMsetFrame = 0;
+        _viewport.SetMsetPose(_activeMsetSection);
+        UpdateMsetPoseButton();
+    }
+
+    private void UpdateMsetPoseButton()
+    {
+        if (_selected == null)
+        {
+            _msetPose.Visible = false;
+            _msetPlay.Visible = false;
+            return;
+        }
+
+        int[] sections = GetUsableMsetSections();
+        int[] animations = GetUsableMsetAnimations();
+        _msetPose.Visible = sections.Length != 0;
+        _msetPlay.Visible = animations.Length != 0;
+        int current = Array.IndexOf(sections, _activeMsetSection);
+        _msetPose.Text = current >= 0
+            ? sections.Length > 1 && (current + 1 < sections.Length || _msetPlaybackTimer.Enabled)
+                ? $"MSET pose {current + 1}/{sections.Length} · Next"
+                : "Restore base pose"
+            : "Apply MSET pose";
+    }
+
+    private int[] GetUsableMsetSections()
+    {
+        ArdViewerModel? selected = _selected;
+        if (selected == null) return Array.Empty<int>();
+        return selected.MsetSections
+            .Select((section, index) => (section, index))
+            .Where(item => (item.section.Channels.Count != 0 || item.section.Curves.Count != 0) &&
+                item.section.JointLocalMatrices.Count == selected.Joints.Count)
+            .Select(item => item.index)
+            .ToArray();
+    }
+
+    private int[] GetUsableMsetAnimations()
+    {
+        ArdViewerModel? selected = _selected;
+        if (selected == null) return Array.Empty<int>();
+        return selected.MsetSections
+            .Select((section, index) => (section, index))
+            .Where(item => item.section.Curves.Count != 0 &&
+                item.section.FramesPerSecond > 0 &&
+                item.section.FrameEnd > 0 &&
+                item.section.JointLocalMatrices.Count == selected.Joints.Count)
+            .Select(item => item.index)
+            .ToArray();
+    }
+
+    private void ToggleMsetPlayback()
+    {
+        if (_msetPlaybackTimer.Enabled)
+        {
+            StopMsetPlayback();
+            return;
+        }
+
+        int[] sections = GetUsableMsetAnimations();
+        if (sections.Length == 0) return;
+        if (!sections.Contains(_activeMsetSection))
+        {
+            _activeMsetSection = sections[0];
+            UpdateMsetPoseButton();
+        }
+        _activeMsetFrame = 0;
+        _msetPlaybackStart = Stopwatch.GetTimestamp();
+        _viewport.SetMsetAnimationFrame(_activeMsetSection, _activeMsetFrame);
+        _msetPlay.Text = "Pause";
+        _msetPlaybackTimer.Start();
+        UpdateMsetPoseButton();
+    }
+
+    private void AdvanceMsetPose()
+    {
+        if (_selected == null ||
+            _activeMsetSection < 0 ||
+            _activeMsetSection >= _selected.MsetSections.Count)
+        {
+            StopMsetPlayback();
+            return;
+        }
+
+        ArdViewerMsetSection section = _selected.MsetSections[_activeMsetSection];
+        if (section.Curves.Count == 0 || section.FrameEnd <= 0 || section.FramesPerSecond <= 0)
+        {
+            StopMsetPlayback();
+            return;
+        }
+        double elapsed = (Stopwatch.GetTimestamp() - _msetPlaybackStart) / (double)Stopwatch.Frequency;
+        _activeMsetFrame = (float)(elapsed * section.FramesPerSecond % section.FrameEnd);
+        _viewport.SetMsetAnimationFrame(_activeMsetSection, _activeMsetFrame);
+    }
+
+    private void StopMsetPlayback()
+    {
+        _msetPlaybackTimer.Stop();
+        _msetPlay.Text = "Play";
+        UpdateMsetPoseButton();
     }
 
     private static string GetExportDirectory(ArdViewerModel model)
@@ -623,6 +779,7 @@ internal sealed class NativeViewerForm : Form
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
+        _msetPlaybackTimer.Dispose();
         foreach (Control control in _textures.Controls)
         {
             if (control is Panel panel)
@@ -725,6 +882,8 @@ internal sealed class NativeGlViewport : Panel
     private ArdViewerModel? _model;
     private int[] _textureIds = Array.Empty<int>();
     private float[] _positions = Array.Empty<float>();
+    private float[] _basePositions = Array.Empty<float>();
+    private int[] _jointIds = Array.Empty<int>();
     private float[] _uvs = Array.Empty<float>();
     private byte[] _colors = Array.Empty<byte>();
     private int[] _indices = Array.Empty<int>();
@@ -757,6 +916,63 @@ internal sealed class NativeGlViewport : Panel
         if (_ready) UploadModel();
         Invalidate();
     }
+
+    internal void SetMsetPose(int sectionIndex)
+    {
+        SetMsetAnimationFrame(sectionIndex, 0);
+    }
+
+    internal void SetMsetAnimationFrame(int sectionIndex, float frame)
+    {
+        if (_model == null || sectionIndex < -1 || sectionIndex >= _model.MsetSections.Count) return;
+        float[] positions = BuildMsetPositions(sectionIndex, frame);
+        Array.Copy(positions, _positions, positions.Length);
+        Invalidate();
+    }
+
+    private float[] BuildMsetPositions(int sectionIndex, float frame)
+    {
+        var result = _basePositions.ToArray();
+        if (_model == null || sectionIndex < 0) return result;
+
+        ArdViewerMsetSection section = _model.MsetSections[sectionIndex];
+        if (section.JointLocalMatrices.Count != _model.Joints.Count ||
+            section.Channels.Count == 0 && section.Curves.Count == 0)
+            return result;
+
+        List<float[]> localMatrices = ArdViewer.BuildMsetJointLocals(_model.Joints, section, frame);
+        var world = new Matrix4x4[_model.Joints.Count];
+        for (int i = 0; i < world.Length; i++)
+        {
+            Matrix4x4 local = ReadMatrix(localMatrices[i]);
+            int parent = _model.Joints[i].ParentIndex;
+            world[i] = parent >= 0 && parent < i ? local * world[parent] : local;
+        }
+
+        var deformations = new Matrix4x4[world.Length];
+        for (int i = 0; i < world.Length; i++)
+            deformations[i] = ReadMatrix(_model.Joints[i].InverseBindMatrix) * world[i];
+
+        for (int i = 0; i < _jointIds.Length; i++)
+        {
+            int joint = _jointIds[i];
+            if (joint < 0 || joint >= deformations.Length) continue;
+            int offset = i * 3;
+            Vector3 posed = Vector3.Transform(
+                new Vector3(_basePositions[offset], _basePositions[offset + 1], _basePositions[offset + 2]),
+                deformations[joint]);
+            result[offset] = posed.X;
+            result[offset + 1] = posed.Y;
+            result[offset + 2] = posed.Z;
+        }
+        return result;
+    }
+
+    private static Matrix4x4 ReadMatrix(float[] values) =>
+        new(values[0], values[1], values[2], values[3],
+            values[4], values[5], values[6], values[7],
+            values[8], values[9], values[10], values[11],
+            values[12], values[13], values[14], values[15]);
 
     internal void ResetCamera()
     {
@@ -839,6 +1055,8 @@ internal sealed class NativeGlViewport : Panel
 
         int vertexCount = _model.Meshes.Sum(mesh => mesh.Positions.Length / 3);
         _positions = new float[vertexCount * 3];
+        _basePositions = new float[vertexCount * 3];
+        _jointIds = new int[vertexCount];
         _uvs = new float[vertexCount * 2];
         _colors = new byte[vertexCount * 4];
         int indexCount = _model.Meshes.Sum(mesh => mesh.Indices.Length);
@@ -850,6 +1068,9 @@ internal sealed class NativeGlViewport : Panel
         {
             int count = mesh.Positions.Length / 3;
             Array.Copy(mesh.Positions, 0, _positions, vertexOffset * 3, mesh.Positions.Length);
+            Array.Copy(mesh.Positions, 0, _basePositions, vertexOffset * 3, mesh.Positions.Length);
+            if (mesh.JointIds.Length == count)
+                Array.Copy(mesh.JointIds, 0, _jointIds, vertexOffset, count);
             Array.Copy(mesh.Indices, 0, _indices, indexOffset, mesh.Indices.Length);
             byte[] colors = Convert.FromBase64String(mesh.Colors);
             Array.Copy(colors, 0, _colors, vertexOffset * 4, colors.Length);
@@ -1044,13 +1265,22 @@ internal sealed class NativeGlViewport : Panel
 
 internal static class NativeGltfExporter
 {
-    internal static string Create(ArdViewerModel model, string outputDirectory)
+    internal static string Create(
+        ArdViewerModel model,
+        string outputDirectory,
+        int msetSectionIndex = -1,
+        float msetFrame = 0)
     {
         using var binary = new MemoryStream();
         var views = new List<Dictionary<string, object>>();
         var accessors = new List<Dictionary<string, object>>();
         var meshes = new List<object>();
         var meshUsesSkin = new List<bool>();
+        List<float[]>? msetLocals = msetSectionIndex >= 0 &&
+            msetSectionIndex < model.MsetSections.Count &&
+            model.MsetSections[msetSectionIndex].JointLocalMatrices.Count == model.Joints.Count
+                ? ArdViewer.BuildMsetJointLocals(model.Joints, model.MsetSections[msetSectionIndex], msetFrame)
+                : null;
 
         int AddAccessor(byte[] bytes, int componentType, string type, int count, int target,
             bool normalized = false, float[]? min = null, float[]? max = null)
@@ -1177,7 +1407,9 @@ internal static class NativeGltfExporter
             for (int i = 0; i < model.Joints.Count; i++)
             {
                 ArdViewerJoint joint = model.Joints[i];
-                float[] localMatrix = joint.LocalMatrix;
+                float[] localMatrix = msetLocals != null
+                    ? msetLocals[i]
+                    : joint.LocalMatrix;
                 var node = new Dictionary<string, object>
                 {
                     ["name"] = joint.Name,
