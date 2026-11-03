@@ -141,19 +141,23 @@ files but does not bundle the .NET Desktop Runtime. The project embeds
 `Data\KH1 ARD Viewer.ico` into the executable; the transparent PNG source is
 `Data\KH1 ARD Viewer.png`.
 
-## Automatic releases
+## GitHub Actions builds and releases
 
-GitHub Actions builds the Windows x64 executable and publishes it as a GitHub
-Release whenever a version tag matching `v*` is pushed. For example, create and
-push a tag to publish a release:
+To build on demand, open the repository's **Actions** tab, select **Build and
+publish release**, choose **Run workflow**, and start it from `main`. Once the
+run completes, download `KH1-ARD-Viewer-win-x64` from its **Artifacts** section.
+
+To publish a GitHub Release automatically, create and push a version tag
+matching `v*`. For example:
 
 ```powershell
 git tag v1.0.0
 git push origin v1.0.0
 ```
 
-The workflow uploads `KH1 ARD Viewer.exe` as a release asset. Releases are
-framework-dependent and require the .NET 10 Desktop Runtime for Windows x64.
+The workflow builds the Windows x64 executable and attaches it to the release.
+The executable is framework-dependent and requires the .NET 10 Desktop Runtime
+for Windows x64.
 
 ## How it works
 
