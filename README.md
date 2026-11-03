@@ -114,14 +114,14 @@ open successfully even if it contains no usable MDLS or MFA models.
 The complete source project and icon assets are in `Data\`. Building requires
 the .NET 10 SDK for Windows x64.
 
-To publish and launch the viewer, run:
+To build and launch the viewer, run:
 
 ```text
 Build.bat
 ```
 
-To publish without automatically starting the application, open a terminal in
-this folder and run:
+To build the executable without automatically starting the application, open a
+terminal in this folder and run:
 
 ```powershell
 dotnet publish .\Data\KH1ARDViewer.csproj `
@@ -135,7 +135,7 @@ dotnet publish .\Data\KH1ARDViewer.csproj `
   -o .\_publish
 ```
 
-This framework-dependent publish creates a single `KH1 ARD Viewer.exe` in the
+This framework-dependent build creates a single `KH1 ARD Viewer.exe` in the
 `_publish` folder. It bundles the application's DLL and JSON configuration
 files but does not bundle the .NET Desktop Runtime. The project embeds
 `Data\KH1 ARD Viewer.ico` into the executable; the transparent PNG source is
