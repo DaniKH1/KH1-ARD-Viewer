@@ -157,7 +157,7 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-The workflow attaches `KH1 ARD Viewer.exe` to each release. The executable is
+The workflow attaches `KH1-ARD-Viewer.exe` to each release. The executable is
 framework-dependent and requires the .NET 10 Desktop Runtime for Windows x64.
 
 ## How it works

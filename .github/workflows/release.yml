@@ -35,11 +35,14 @@ jobs:
           -p:DebugSymbols=false
           -o .\_publish
 
+      - name: Rename release executable
+        run: Rename-Item ".\_publish\KH1 ARD Viewer.exe" "KH1-ARD-Viewer.exe"
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: KH1-ARD-Viewer-win-x64
-          path: .\_publish\KH1 ARD Viewer.exe
+          path: .\_publish\KH1-ARD-Viewer.exe
           if-no-files-found: error
 
       - name: Create GitHub Release
@@ -49,4 +52,4 @@ jobs:
           tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('build-{0}', github.run_number) }}
           prerelease: ${{ !startsWith(github.ref, 'refs/tags/v') }}
           generate_release_notes: true
-          files: .\_publish\KH1 ARD Viewer.exe
+          files: .\_publish\KH1-ARD-Viewer.exe
