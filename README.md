@@ -207,3 +207,9 @@ Confirm that the application folder is writable. The output is created in the
 
 KH1 ARD Viewer is a model inspection and export tool. It does not edit ARD
 archives, modify game data, or provide a full game scene or animation editor.
+
+## AI disclosure
+
+This tool was made possible with the assistance of artificial intelligence
+during development. Its code and output have been reviewed and tested by the
+project's author.
