@@ -227,3 +227,9 @@ archives, modify game data, or provide a full game scene or animation editor.
 This tool was made possible with the assistance of artificial intelligence
 during development. Its code and output have been reviewed and tested by the
 project's author.
+
+## License
+
+Original code and documentation are licensed under the BSD 3-Clause License.
+This does not grant rights to Kingdom Hearts game content or trademarks. See
+`LICENSE` for the license terms and third-party intellectual property notice.
