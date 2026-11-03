@@ -5,6 +5,8 @@ stored in Kingdom Hearts 1 `.ard` archives. KH1 ARD Viewer reads supported MDLS
 and MFA resources, renders the selected model with native OpenGL, previews its
 textures, and exports it as a glTF 2.0 file with PNG textures alongside it.
 
+<img width="1919" height="998" alt="image" src="https://github.com/user-attachments/assets/258a8016-5856-4f44-bcf6-a2efc8e06497" />
+
 ## Features
 
 - Open one or more `.ard` files, or recursively load ARD files from a folder.
