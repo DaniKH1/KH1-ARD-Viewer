@@ -19,6 +19,7 @@ internal sealed class NativeViewerForm : Form
     private readonly Label _loadProgress = new();
     private readonly Label _stats = new();
     private readonly NativeActionButton _export = new();
+    private readonly NativeActionButton _bones = new();
     private readonly NativeActionButton _msetPose = new();
     private readonly NativeActionButton _msetPlay = new();
     private readonly System.Windows.Forms.Timer _msetPlaybackTimer = new() { Interval = 16 };
@@ -233,6 +234,20 @@ internal sealed class NativeViewerForm : Form
         _export.Click += (_, _) => ExportSelected();
         stage.Controls.Add(_export);
         _export.BringToFront();
+
+        _bones.Text = "Show bones";
+        StyleButton(_bones);
+        _bones.Size = new Size(124, 38);
+        _bones.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+        _bones.Location = new Point(126, 14);
+        _bones.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+        _bones.Visible = false;
+        _bones.Click += (_, _) =>
+        {
+            _bones.Text = _viewport.ToggleShowBones() ? "Hide bones" : "Show bones";
+        };
+        stage.Controls.Add(_bones);
+        _bones.BringToFront();
 
         _msetPose.Text = "Apply MSET pose";
         StyleButton(_msetPose);
@@ -496,6 +511,8 @@ internal sealed class NativeViewerForm : Form
         _activeMsetSection = -1;
         _activeMsetFrame = 0;
         _viewport.SetModel(model);
+        _bones.Visible = model.Joints.Count > 1;
+        _bones.Text = _viewport.BonesVisible ? "Hide bones" : "Show bones";
         _export.Enabled = true;
         _export.Visible = true;
         _stats.Visible = true;
@@ -861,6 +878,7 @@ internal sealed class NativeGlViewport : Panel
     private const uint GlModelview = 0x1700;
     private const uint GlTriangles = 0x0004;
     private const uint GlLines = 0x0001;
+    private const uint GlPoints = 0x0000;
     private const uint GlTexture2D = 0x0DE1;
     private const uint GlRgba = 0x1908;
     private const uint GlUnsignedByte = 0x1401;
@@ -887,6 +905,10 @@ internal sealed class NativeGlViewport : Panel
     private float[] _uvs = Array.Empty<float>();
     private byte[] _colors = Array.Empty<byte>();
     private int[] _indices = Array.Empty<int>();
+    private Matrix4x4[] _jointWorldMatrices = Array.Empty<Matrix4x4>();
+    private int _activeMsetSection = -1;
+    private float _activeMsetFrame;
+    private bool _showBones;
     private float[] _center = new float[3];
     private float _radius = 1;
     private float _floorY;
@@ -913,8 +935,20 @@ internal sealed class NativeGlViewport : Panel
     internal void SetModel(ArdViewerModel model)
     {
         _model = model;
+        _activeMsetSection = -1;
+        _activeMsetFrame = 0;
+        UpdateJointWorldMatrices();
         if (_ready) UploadModel();
         Invalidate();
+    }
+
+    internal bool BonesVisible => _showBones;
+
+    internal bool ToggleShowBones()
+    {
+        _showBones = !_showBones;
+        Invalidate();
+        return _showBones;
     }
 
     internal void SetMsetPose(int sectionIndex)
@@ -925,6 +959,9 @@ internal sealed class NativeGlViewport : Panel
     internal void SetMsetAnimationFrame(int sectionIndex, float frame)
     {
         if (_model == null || sectionIndex < -1 || sectionIndex >= _model.MsetSections.Count) return;
+        _activeMsetSection = sectionIndex;
+        _activeMsetFrame = frame;
+        UpdateJointWorldMatrices();
         float[] positions = BuildMsetPositions(sectionIndex, frame);
         Array.Copy(positions, _positions, positions.Length);
         Invalidate();
@@ -965,6 +1002,7 @@ internal sealed class NativeGlViewport : Panel
             result[offset + 1] = posed.Y;
             result[offset + 2] = posed.Z;
         }
+
         return result;
     }
 
@@ -973,6 +1011,34 @@ internal sealed class NativeGlViewport : Panel
             values[4], values[5], values[6], values[7],
             values[8], values[9], values[10], values[11],
             values[12], values[13], values[14], values[15]);
+
+    private void UpdateJointWorldMatrices()
+    {
+        if (_model == null)
+        {
+            _jointWorldMatrices = Array.Empty<Matrix4x4>();
+            return;
+        }
+
+        ArdViewerMsetSection? section = _activeMsetSection >= 0 &&
+            _activeMsetSection < _model.MsetSections.Count
+                ? _model.MsetSections[_activeMsetSection]
+                : null;
+        List<float[]>? animatedLocals = section != null &&
+            section.JointLocalMatrices.Count == _model.Joints.Count &&
+            (section.Channels.Count != 0 || section.Curves.Count != 0)
+                ? ArdViewer.BuildMsetJointLocals(_model.Joints, section, _activeMsetFrame)
+                : null;
+        _jointWorldMatrices = new Matrix4x4[_model.Joints.Count];
+        for (int i = 0; i < _jointWorldMatrices.Length; i++)
+        {
+            Matrix4x4 local = ReadMatrix(animatedLocals?[i] ?? _model.Joints[i].LocalMatrix);
+            int parent = _model.Joints[i].ParentIndex;
+            _jointWorldMatrices[i] = parent >= 0 && parent < i
+                ? local * _jointWorldMatrices[parent]
+                : local;
+        }
+    }
 
     internal void ResetCamera()
     {
@@ -1124,6 +1190,7 @@ internal sealed class NativeGlViewport : Panel
             view.M43, view.M44 });
         DrawGrid();
         if (_model != null) DrawModel();
+        if (_showBones) DrawBones();
         SwapBuffers(_deviceContext);
     }
 
@@ -1171,6 +1238,35 @@ internal sealed class NativeGlViewport : Panel
             GlEnd();
             vertexOffset += mesh.Positions.Length / 3;
         }
+    }
+
+    private void DrawBones()
+    {
+        if (_model == null || _jointWorldMatrices.Length != _model.Joints.Count) return;
+
+        GlDisable(GlTexture2D);
+        GlDisable(GlDepthTest);
+        GlLineWidth(2);
+        GlColor4ub(94, 222, 255, 255);
+        GlBegin(GlLines);
+        for (int i = 0; i < _model.Joints.Count; i++)
+        {
+            int parent = _model.Joints[i].ParentIndex;
+            if (parent < 0 || parent >= i) continue;
+            Matrix4x4 parentWorld = _jointWorldMatrices[parent];
+            Matrix4x4 jointWorld = _jointWorldMatrices[i];
+            GlVertex3f(parentWorld.M41, parentWorld.M42, parentWorld.M43);
+            GlVertex3f(jointWorld.M41, jointWorld.M42, jointWorld.M43);
+        }
+        GlEnd();
+
+        GlPointSize(8);
+        GlColor4ub(255, 192, 72, 255);
+        GlBegin(GlPoints);
+        foreach (Matrix4x4 jointWorld in _jointWorldMatrices)
+            GlVertex3f(jointWorld.M41, jointWorld.M42, jointWorld.M43);
+        GlEnd();
+        GlEnable(GlDepthTest);
     }
 
     private void HandleMouseDown(object? sender, MouseEventArgs e)
@@ -1258,6 +1354,8 @@ internal sealed class NativeGlViewport : Panel
     [DllImport("opengl32.dll", EntryPoint = "glLoadMatrixf")] private static extern void GlLoadMatrixf([In] float[] matrix);
     [DllImport("opengl32.dll", EntryPoint = "glBegin")] private static extern void GlBegin(uint mode);
     [DllImport("opengl32.dll", EntryPoint = "glEnd")] private static extern void GlEnd();
+    [DllImport("opengl32.dll", EntryPoint = "glLineWidth")] private static extern void GlLineWidth(float width);
+    [DllImport("opengl32.dll", EntryPoint = "glPointSize")] private static extern void GlPointSize(float size);
     [DllImport("opengl32.dll", EntryPoint = "glColor4ub")] private static extern void GlColor4ub(byte r, byte g, byte b, byte a);
     [DllImport("opengl32.dll", EntryPoint = "glVertex3f")] private static extern void GlVertex3f(float x, float y, float z);
     [DllImport("opengl32.dll", EntryPoint = "glTexCoord2f")] private static extern void GlTexCoord2f(float u, float v);

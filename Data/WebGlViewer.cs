@@ -37,11 +37,12 @@ select{font:inherit;background:#181d25;border:1px solid #4b5668;color:#edf2f8;bo
 #stats{position:absolute;top:16px;right:16px;padding:10px 12px;background:#111d;border:1px solid #303846;border-radius:5px;color:#c5cfdd;line-height:1.65;font-size:12px;white-space:pre-line;pointer-events:none}
 main{position:relative;min-width:0;min-height:0}canvas{width:100%;height:100%;display:block;touch-action:none}
 #hint{position:absolute;bottom:15px;left:16px;background:#111b;color:#c5cfdd;padding:8px 11px;border-radius:5px;pointer-events:none}
-#export,#reset,#mset-pose,#mset-play{position:absolute;z-index:2;display:grid;place-items:center;background:#181d25dd;border:1px solid #4b5668;box-shadow:0 4px 16px #0006}
+#export,#reset,#mset-pose,#mset-play,#bones{position:absolute;z-index:2;display:grid;place-items:center;background:#181d25dd;border:1px solid #4b5668;box-shadow:0 4px 16px #0006}
 #export{top:16px;left:16px;padding:9px 14px}
-#export:hover,#reset:hover,#mset-pose:hover,#mset-play:hover{border-color:#9bbff2;background:#252d39}
+#export:hover,#reset:hover,#mset-pose:hover,#mset-play:hover,#bones:hover{border-color:#9bbff2;background:#252d39}
 #mset-pose{bottom:15px;right:192px;padding:9px 14px}
 #mset-play{bottom:15px;right:360px;width:88px;padding:9px 14px}
+#bones{bottom:15px;right:456px;padding:9px 14px}
 #reset{right:16px;bottom:15px;padding:9px 14px}
 #texture-modal{position:fixed;z-index:5;inset:0;display:grid;place-items:center;background:#05070bcc;padding:24px}
 #texture-modal[hidden]{display:none}
@@ -69,7 +70,7 @@ main{position:relative;min-width:0;min-height:0}canvas{width:100%;height:100%;di
 </section>
 <div id="error"></div>
 </aside>
-<main><canvas id="view"></canvas><button id="export" title="Export the selected model to glTF" hidden disabled>Export</button><button id="mset-pose" title="Apply a decoded MSET pose" hidden>Apply MSET pose</button><button id="mset-play" title="Play the decoded MSET keyframe animation" hidden>Play</button><button id="reset" title="Reset camera">Reset camera</button><div id="stats"></div><div id="hint">Drag: orbit · Wheel: zoom · Shift or middle-drag: pan</div><div id="texture-modal" hidden><div id="texture-preview"><img id="texture-large" alt=""><div id="texture-caption"></div></div></div></main>
+<main><canvas id="view"></canvas><button id="export" title="Export the selected model to glTF" hidden disabled>Export</button><button id="bones" title="Show or hide the skeleton bones" hidden>Show bones</button><button id="mset-pose" title="Apply a decoded MSET pose" hidden>Apply MSET pose</button><button id="mset-play" title="Play the decoded MSET keyframe animation" hidden>Play</button><button id="reset" title="Reset camera">Reset camera</button><div id="stats"></div><div id="hint">Drag: orbit · Wheel: zoom · Shift or middle-drag: pan</div><div id="texture-modal" hidden><div id="texture-preview"><img id="texture-large" alt=""><div id="texture-caption"></div></div></div></main>
 <script>
 const models=__ARD_DATA__;
 const canvas=document.getElementById('view'),gl=canvas.getContext('webgl2',{antialias:true,alpha:false});
@@ -94,7 +95,7 @@ const stats=document.getElementById('stats'),archiveList=document.getElementById
 const archives=new Map(),expandedArchives=new Set();
 const initialArchive='__ARD_TITLE__';
 if(models.length)archives.set(initialArchive,models);
-let gpu=[],current=-1,currentMsetSection=-1,currentMsetFrame=0,center=[0,0,0],radius=1,theta=.65,phi=1.05,distance=4,pan=[0,0,0],drag=null,grid=null,msetPlaybackTimer=null,msetPlaybackSection=-1,msetPlaybackStart=null;
+let gpu=[],current=-1,currentMsetSection=-1,currentMsetFrame=0,center=[0,0,0],radius=1,theta=.65,phi=1.05,distance=4,pan=[0,0,0],drag=null,grid=null,msetPlaybackTimer=null,msetPlaybackSection=-1,msetPlaybackStart=null,showBones=false,bonePositionBuffer=null,boneColorBuffer=null,boneUvBuffer=null;
 function stopMsetPlayback(){if(msetPlaybackTimer!==null){cancelAnimationFrame(msetPlaybackTimer);msetPlaybackTimer=null;}msetPlaybackSection=-1;msetPlaybackStart=null;document.getElementById('mset-play').textContent='Play';}
 function buffer(target,data){const b=gl.createBuffer();gl.bindBuffer(target,b);gl.bufferData(target,data,gl.STATIC_DRAW);return b;}
 function release(){for(const g of gpu){gl.deleteBuffer(g.p);gl.deleteBuffer(g.c);gl.deleteBuffer(g.uv);gl.deleteBuffer(g.i);if(g.texture)gl.deleteTexture(g.texture);}gpu=[];}
@@ -154,6 +155,7 @@ function loadModel(index){
  stats.textContent='Meshes: '+model.meshes.length+'\nVertices: '+vertices.toLocaleString()+'\nTriangles: '+triangles.toLocaleString()+'\nTextures: '+model.textures.length+'\nMSET data: '+(model.msetSections||[]).length+' sections / '+msetChannels+' channels / '+msetCurves+' curves';
  const poseButton=document.getElementById('mset-pose');poseButton.hidden=usableMsets.length===0;poseButton.textContent='Apply MSET pose';
  document.getElementById('mset-play').hidden=playableMsets.length===0;
+ const bonesButton=document.getElementById('bones');bonesButton.hidden=model.joints.length<2;bonesButton.textContent=showBones?'Hide bones':'Show bones';
  status.textContent='';const exportButton=document.getElementById('export');exportButton.disabled=false;exportButton.hidden=false;textureModal.hidden=true;renderTextures(model);renderArchives();
  draw();
 }
@@ -236,6 +238,42 @@ function buildMsetWorld(model,section,frame){
  }
  return world;
 }
+function buildPreviewJointWorld(model){
+ const section=currentMsetSection>=0?model.msetSections[currentMsetSection]:null;
+ if(section&&(section.channels.length||section.curves.length)&&section.jointLocalMatrices?.length===model.joints.length)
+  return buildMsetWorld(model,section,currentMsetFrame);
+ const world=[];
+ for(let i=0;i<model.joints.length;i++){
+  const local=model.joints[i].localMatrix,parent=model.joints[i].parentIndex;
+  world[i]=parent>=0&&parent<i?multiplyRowMajor(local,world[parent]):local;
+ }
+ return world;
+}
+function drawBones(model){
+ if(!bonePositionBuffer){bonePositionBuffer=gl.createBuffer();boneColorBuffer=gl.createBuffer();boneUvBuffer=gl.createBuffer();}
+ const world=buildPreviewJointWorld(model),positions=[],colors=[];
+ const addLine=(a,b,color)=>{
+  positions.push(...a,...b);
+  colors.push(...color,...color);
+ };
+ const pointSize=Math.max(radius*.008,.002);
+ for(let i=0;i<model.joints.length;i++){
+  const joint=model.joints[i],matrix=world[i],point=[matrix[12],matrix[13],matrix[14]],parent=joint.parentIndex;
+  if(parent>=0&&parent<i){const parentMatrix=world[parent];addLine([parentMatrix[12],parentMatrix[13],parentMatrix[14]],point,[80,220,255,255]);}
+  addLine([point[0]-pointSize,point[1],point[2]],[point[0]+pointSize,point[1],point[2]],[255,191,70,255]);
+  addLine([point[0],point[1]-pointSize,point[2]],[point[0],point[1]+pointSize,point[2]],[255,191,70,255]);
+  addLine([point[0],point[1],point[2]-pointSize],[point[0],point[1],point[2]+pointSize],[255,191,70,255]);
+ }
+ gl.disable(gl.DEPTH_TEST);
+ gl.bindBuffer(gl.ARRAY_BUFFER,bonePositionBuffer);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(positions),gl.DYNAMIC_DRAW);
+ gl.enableVertexAttribArray(loc.position);gl.vertexAttribPointer(loc.position,3,gl.FLOAT,false,0,0);
+ gl.bindBuffer(gl.ARRAY_BUFFER,boneColorBuffer);gl.bufferData(gl.ARRAY_BUFFER,new Uint8Array(colors),gl.DYNAMIC_DRAW);
+ gl.enableVertexAttribArray(loc.color);gl.vertexAttribPointer(loc.color,4,gl.UNSIGNED_BYTE,true,0,0);
+ gl.bindBuffer(gl.ARRAY_BUFFER,boneUvBuffer);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(positions.length/3*2),gl.DYNAMIC_DRAW);
+ gl.enableVertexAttribArray(loc.uv);gl.vertexAttribPointer(loc.uv,2,gl.FLOAT,false,0,0);
+ gl.uniform1i(loc.has,0);gl.drawArrays(gl.LINES,0,positions.length/3);
+ gl.enable(gl.DEPTH_TEST);
+}
 function getUsableMsetSections(model){return model.msetSections.map((section,index)=>({section,index}))
  .filter(item=>(item.section.channels.length||item.section.curves.length)&&item.section.jointLocalMatrices?.length===model.joints.length)
  .map(item=>item.index);}
@@ -264,6 +302,7 @@ function draw(){
   gl.uniform1i(loc.has,g.texture?1:0);if(g.texture){gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,g.texture);gl.uniform1i(loc.tex,0);}
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,g.i);gl.drawElements(gl.TRIANGLES,g.count,gl.UNSIGNED_INT,0);
  }
+  if(showBones&&models[current].joints.length>1)drawBones(models[current]);
 }
 function renderArchives(){
  archiveList.replaceChildren();
@@ -369,9 +408,9 @@ function makeGltf(model,msetSectionIndex=-1,msetFrame=0){
  }
  const nodes=meshes.map((mesh,i)=>({mesh:i,name:model.meshes[i].name,...(meshUsesSkin[i]?{skin:0}:{})}));
  const sceneNodes=nodes.map((_,i)=>i),skins=[];
+ const msetSection=msetSectionIndex>=0?model.msetSections[msetSectionIndex]:null;
+ const msetLocals=msetSection?buildMsetLocals(model,msetSection,msetFrame):null;
  if(meshUsesSkin.some(Boolean)){
-  const msetSection=msetSectionIndex>=0?model.msetSections[msetSectionIndex]:null;
-  const msetLocals=msetSection?buildMsetLocals(model,msetSection,msetFrame):null;
   const boneOffset=nodes.length,boneNodes=model.joints.map((_,i)=>boneOffset+i);
   for(let i=0;i<model.joints.length;i++){
    const joint=model.joints[i],matrix=msetLocals?.length===model.joints.length?msetLocals[i]:joint.localMatrix;
@@ -407,6 +446,11 @@ document.getElementById('export').addEventListener('click',async event=>{
   const result=await response.json();status.style.color='#9be0ad';status.textContent='Exported: '+result.path;
  }catch(error){status.textContent='Could not export '+model.name+': '+error.message;}
  finally{button.disabled=false;}
+});
+document.getElementById('bones').addEventListener('click',event=>{
+ showBones=!showBones;
+ event.currentTarget.textContent=showBones?'Hide bones':'Show bones';
+ draw();
 });
 document.getElementById('mset-pose').addEventListener('click',()=>{
  if(current<0)return;
