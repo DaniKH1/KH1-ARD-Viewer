@@ -162,18 +162,6 @@ files but does not bundle the .NET Desktop Runtime. The project embeds
 `Data\KH1 ARD Viewer.ico` into the executable; the transparent PNG source is
 `Data\KH1 ARD Viewer.png`.
 
-## GitHub Actions builds and releases
-
-To build and publish a release, open the repository's **Actions** tab, select
-**Release Manual Executable**, and choose **Run workflow**. Optionally enter a
-version tag beginning with `v` (for example, `v1.0.0`); if left empty, the
-workflow uses the current date. The executable is built first, then the release
-is published automatically by the second job.
-
-The workflow also keeps a downloadable build artifact on the Actions run. The
-published `KH1 ARD Viewer.exe` is framework-dependent and requires the .NET 10
-Desktop Runtime for Windows x64.
-
 ## How it works
 
 1. **Archive discovery** - The reader validates the ARD offset table and uses
