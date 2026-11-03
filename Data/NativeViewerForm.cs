@@ -100,6 +100,10 @@ internal sealed class NativeViewerForm : Form
                 }
                 await LoadArchivesAsync([initialArchive]);
             }
+            else
+            {
+                await LoadLastFolderAsync();
+            }
         };
     }
 
@@ -280,10 +284,21 @@ internal sealed class NativeViewerForm : Form
         };
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
         RememberFolder(dialog.SelectedPath);
+        await LoadFolderAsync(dialog.SelectedPath);
+    }
+
+    private async Task LoadLastFolderAsync()
+    {
+        if (_lastFolder is null || !Directory.Exists(_lastFolder)) return;
+        await LoadFolderAsync(_lastFolder);
+    }
+
+    private async Task LoadFolderAsync(string folder)
+    {
         string[] paths;
         try
         {
-            paths = Directory.GetFiles(dialog.SelectedPath, "*.ard", SearchOption.AllDirectories)
+            paths = Directory.GetFiles(folder, "*.ard", SearchOption.AllDirectories)
                 .OrderBy(path => path, StringComparer.OrdinalIgnoreCase).ToArray();
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)

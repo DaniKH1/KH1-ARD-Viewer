@@ -11,7 +11,8 @@ textures, and exports it as a glTF 2.0 file with PNG textures alongside it.
 
 - Open one or more `.ard` files, or recursively load ARD files from a folder.
 - Show a live `Files Loaded` count while multiple archives are loading.
-- Remember the last folder used by the open-file and open-folder dialogs.
+- Remember and automatically reload ARD files from the last selected folder
+  when the viewer starts.
 - Expand or collapse each archive's model list, then select a model for viewing.
 - Render MDLS and MFA geometry in a native OpenGL viewport.
 - Orbit, zoom, and pan around the model, with a ground grid for scale and
@@ -45,7 +46,7 @@ textures, and exports it as a glTF 2.0 file with PNG textures alongside it.
 The distributed application is a single-file, framework-dependent publish.
 Its application assembly and .NET dependency/runtime configuration files are
 bundled inside `KH1 ARD Viewer.exe`; the .NET 10 Desktop Runtime itself is not
-included. The app remembers the last folder used in
+included. The app remembers the last folder in
 `%LOCALAPPDATA%\KH1 ARD Viewer\settings.json`.
 
 ## Quick start
@@ -62,7 +63,8 @@ included. The app remembers the last folder used in
 
 The viewer does not automatically choose a model. Select an individual MDLS or
 MFA entry to activate the viewport, statistics, texture gallery, and Export
-button.
+button. On later launches, it automatically scans and loads ARD files from the
+last selected folder.
 
 ## Controls
 
