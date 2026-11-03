@@ -177,7 +177,7 @@ Desktop Runtime for Windows x64.
 
 ```text
 ARD Viewer/
-|-- Build.bat                      Build and launch script
+|-- Build.bat                      Build script
 |-- README.md                      This guide
 |-- .gitignore                     Build and local-output exclusions
 |-- .github/
