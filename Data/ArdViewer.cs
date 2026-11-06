@@ -71,9 +71,18 @@ internal static class ArdViewer
                 byte[] slot = data.AsSpan(blob.Offset, blob.Length).ToArray();
                 MdlsModel parsed = MdlsParser.Parse(slot);
                 ArdViewerModel model = ConvertMdls(parsed, ModelSlotName(names, blob.Slot));
-                model.MsetSections.AddRange(Kh1MsetParser.ReadEmbedded(slot, parsed.Joints.Count, blob.Slot));
-                foreach (ArdViewerMsetSection section in model.MsetSections)
-                    section.JointLocalMatrices = BuildMsetJointLocals(model.Joints, section, 0);
+                foreach (ArdViewerMsetSection section in Kh1MsetParser.ReadEmbedded(slot, parsed.Joints.Count, blob.Slot))
+                {
+                    try
+                    {
+                        section.JointLocalMatrices = BuildMsetJointLocals(model.Joints, section, 0);
+                        model.MsetSections.Add(section);
+                    }
+                    catch (InvalidDataException error)
+                    {
+                        Console.Error.WriteLine($"Skipped invalid MSET pose in MDLS slot {blob.Slot}: {error.Message}");
+                    }
+                }
                 if (model.Meshes.Count != 0) models.Add(model);
             }
             catch (Exception error)
@@ -298,31 +307,7 @@ internal static class ArdViewer
     internal static List<float[]> BuildMsetJointLocals(
         IReadOnlyList<ArdViewerJoint> joints,
         ArdViewerMsetSection section,
-        float frame)
-    {
-        var channelValues = joints
-            .Select(joint => (float[])joint.TransformChannels.Clone())
-            .ToArray();
-        foreach (ArdViewerMsetChannel channel in section.Channels)
-            channelValues[channel.Joint][channel.Channel - 1] = channel.Value;
-        foreach (ArdViewerMsetCurve curve in section.Curves)
-            channelValues[curve.Joint][curve.Channel - 1] = curve.Sample(frame);
-
-        Matrix4x4 basis = Matrix4x4.CreateScale(-0.01f, 0.01f, 0.01f);
-        Matrix4x4.Invert(basis, out Matrix4x4 inverseBasis);
-        var matrices = new List<float[]>(joints.Count);
-        for (int index = 0; index < joints.Count; index++)
-        {
-            float[] values = channelValues[index];
-            Matrix4x4 local = BuildJointLocal(
-                values[0], values[1], values[2],
-                values[3], values[4], values[5],
-                values[6], values[7], values[8]);
-            matrices.Add(ToMatrixArray(inverseBasis * local * basis));
-        }
-
-        return matrices;
-    }
+        float frame) => Kh1MsetPose.Evaluate(joints, section, frame);
 
     private static float[] ToMatrixArray(Matrix4x4 matrix) =>
     [

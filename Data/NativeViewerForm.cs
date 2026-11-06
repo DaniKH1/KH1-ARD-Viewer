@@ -519,7 +519,7 @@ internal sealed class NativeViewerForm : Form
         int vertices = model.Meshes.Sum(mesh => mesh.Positions.Length / 3);
         int triangles = model.Meshes.Sum(mesh => mesh.Indices.Length / 3);
         int msetChannels = model.MsetSections.Sum(section => section.Channels.Count);
-        int msetCurves = model.MsetSections.Sum(section => section.Curves.Count);
+        int msetCurves = model.MsetSections.Sum(section => section.Curves.Count + section.HelperCurves.Count);
         _stats.Text = $"Meshes: {model.Meshes.Count}\r\nVertices: {vertices:N0}\r\nTriangles: {triangles:N0}\r\nTextures: {model.Textures.Count}\r\nMSET data: {model.MsetSections.Count} sections / {msetChannels} channels / {msetCurves} curves";
         UpdateMsetPoseButton();
         _status.Text = $"{model.Format} / {model.Name} · {model.Archive}";
@@ -708,7 +708,7 @@ internal sealed class NativeViewerForm : Form
         if (selected == null) return Array.Empty<int>();
         return selected.MsetSections
             .Select((section, index) => (section, index))
-            .Where(item => (item.section.Channels.Count != 0 || item.section.Curves.Count != 0) &&
+            .Where(item => item.section.HasPose &&
                 item.section.JointLocalMatrices.Count == selected.Joints.Count)
             .Select(item => item.index)
             .ToArray();
@@ -720,7 +720,7 @@ internal sealed class NativeViewerForm : Form
         if (selected == null) return Array.Empty<int>();
         return selected.MsetSections
             .Select((section, index) => (section, index))
-            .Where(item => item.section.Curves.Count != 0 &&
+            .Where(item => item.section.HasAnimation &&
                 item.section.FramesPerSecond > 0 &&
                 item.section.FrameEnd > 0 &&
                 item.section.JointLocalMatrices.Count == selected.Joints.Count)
@@ -762,7 +762,7 @@ internal sealed class NativeViewerForm : Form
         }
 
         ArdViewerMsetSection section = _selected.MsetSections[_activeMsetSection];
-        if (section.Curves.Count == 0 || section.FrameEnd <= 0 || section.FramesPerSecond <= 0)
+        if (!section.HasAnimation || section.FrameEnd <= 0 || section.FramesPerSecond <= 0)
         {
             StopMsetPlayback();
             return;
@@ -974,7 +974,7 @@ internal sealed class NativeGlViewport : Panel
 
         ArdViewerMsetSection section = _model.MsetSections[sectionIndex];
         if (section.JointLocalMatrices.Count != _model.Joints.Count ||
-            section.Channels.Count == 0 && section.Curves.Count == 0)
+            !section.HasPose)
             return result;
 
         List<float[]> localMatrices = ArdViewer.BuildMsetJointLocals(_model.Joints, section, frame);
@@ -1026,7 +1026,7 @@ internal sealed class NativeGlViewport : Panel
                 : null;
         List<float[]>? animatedLocals = section != null &&
             section.JointLocalMatrices.Count == _model.Joints.Count &&
-            (section.Channels.Count != 0 || section.Curves.Count != 0)
+            section.HasPose
                 ? ArdViewer.BuildMsetJointLocals(_model.Joints, section, _activeMsetFrame)
                 : null;
         _jointWorldMatrices = new Matrix4x4[_model.Joints.Count];

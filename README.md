@@ -128,15 +128,75 @@ preserved. Unsupported or malformed resources may be skipped; an archive can
 open successfully even if it contains no usable MDLS or MFA models.
 
 The viewer decodes embedded MMTN references against the containing MDLS
-skeleton, including supported type-1 through type-4 animation curves, their
-keyframe times, values, tangents, and encoded frame rate. **Play/Pause**
+skeleton. Key headers contain a signed time in 1/256-frame units and an
+interpolation byte: hold, linear, or cubic Hermite. Tangents use the same time
+units. Each curve preserves its hold, linear, or repeat behavior at the edges;
+support keys beyond a clip's playback end are retained. **Play/Pause**
 evaluates those keyframes over the clip's actual timeline; it does not cycle or
-blend between unrelated static poses. **Apply MSET pose** still cycles decoded
+blend between unrelated static poses. Joint curves and helper curves use
+separate index spaces. Motion flags drive fixed joints, helper positions and
+orientations, and one- or two-bone IK chains, with the same evaluated skeleton
+used by the mesh, bone overlay, and export. Clips animated only through helpers
+are also playable. **Apply MSET pose** still cycles decoded
 references, and **Restore base pose** returns to the bind pose. Unsupported curve
-key types are skipped and reported. **Show bones** toggles the model skeleton in
+edge modes are skipped and reported. **Show bones** toggles the model skeleton in
 the preview, including its animated joint positions. Exports preserve the selected
 pose and armature, including the current animation frame when exporting during
-playback.
+playback. Poses are evaluated independently from the clip's initial state;
+runtime actor placement, gameplay look-at targets and ground collision IK are
+not simulated.
+
+The MMTN key layout and skeleton flag semantics were cross-checked against
+[KH1-EVDL-TOOLS's animation implementation](https://github.com/gaithern/KH1-EVDL-TOOLS/tree/5df63d2/anim).
+
+### Animation regression checks
+
+Run the dependency-free regression executable with the .NET 10 SDK:
+
+```powershell
+dotnet run --project Tests/AnimationRegression.csproj -c Release
+```
+
+The synthetic checks cover packed key headers, signed and fractional times,
+hold/linear/Hermite interpolation, tangent units, edge modes, separate helper
+indices, helper orientations, and two-bone IK. To parse and sample every ARD
+in a local game-data folder without opening the UI:
+
+```powershell
+dotnet run --project Tests/AnimationRegression.csproj -c Release -- --scan "C:\path\to\kh1"
+```
+
+No game assets are included in the tests.
+
+The native playback regression also invokes the production Play, timer tick,
+and Pause handlers on a hidden form. It verifies that a helper-only clip keeps
+playing, advances its frame, and moves viewport vertices without requiring an
+OpenGL context. The reference run repeats this check with `nm01.ard / nm_6105`.
+
+To audit every playable clip through those native handlers, including its key
+times, interval midpoints and timeline samples, write a JSON playback report:
+
+```powershell
+dotnet run --project Tests/AnimationRegression.csproj -c Release -- --playback-scan "C:\path\to\kh1" "C:\temp\playback-report.json"
+```
+
+The audit checks clip selection, frame progression, timer continuity, Pause,
+and finite vertex/bone data. It records curve, skeleton and vertex movement
+separately, so a clip with changing but unused helpers is visible in the
+report without being mistaken for a stopped timer. Poses with no duration
+are excluded using the same eligibility rules as Play.
+
+For an independent comparison, clone the linked KH1-EVDL-TOOLS reference at
+commit `5df63d2`, then generate private fixtures from local game assets:
+
+```powershell
+python Tests/generate_reference.py "C:\path\to\kh1" "C:\path\to\KH1-EVDL-TOOLS" "C:\temp\poses.json"
+dotnet run --project Tests/AnimationRegression.csproj -c Release -- --reference "C:\temp\poses.json"
+```
+
+This compares every world-matrix component at five times per clip across
+seven archives, including helper orientation, aim, one- and two-bone IK,
+flipped chains, root-relative rotation and keep-position flags.
 
 ## Build from source
 

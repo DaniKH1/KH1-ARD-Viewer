@@ -1,5 +1,7 @@
 Data/bin/
 Data/obj/
+Tests/bin/
+Tests/obj/
 _build/
 _publish/
 KH1 ARD Viewer.exe
