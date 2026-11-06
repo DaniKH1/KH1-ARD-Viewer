@@ -173,6 +173,19 @@ and Pause handlers on a hidden form. It verifies that a helper-only clip keeps
 playing, advances its frame, and moves viewport vertices without requiring an
 OpenGL context. The reference run repeats this check with `nm01.ard / nm_6105`.
 
+To audit every playable clip through those native handlers, including its key
+times, interval midpoints and timeline samples, write a JSON playback report:
+
+```powershell
+dotnet run --project Tests/AnimationRegression.csproj -c Release -- --playback-scan "C:\path\to\kh1" "C:\temp\playback-report.json"
+```
+
+The audit checks clip selection, frame progression, timer continuity, Pause,
+and finite vertex/bone data. It records curve, skeleton and vertex movement
+separately, so a clip with changing but unused helpers is visible in the
+report without being mistaken for a stopped timer. Poses with no duration
+are excluded using the same eligibility rules as Play.
+
 For an independent comparison, clone the linked KH1-EVDL-TOOLS reference at
 commit `5df63d2`, then generate private fixtures from local game assets:
 

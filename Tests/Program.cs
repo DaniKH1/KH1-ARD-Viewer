@@ -120,7 +120,11 @@ PlaybackRegression.Check(new ArdViewerModel
 }, 0);
 Console.WriteLine("PASS: helper-only Play, timer tick, vertex movement and Pause.");
 
-if (args.Length == 2 && args[0] == "--reference")
+if (args.Length == 3 && args[0] == "--playback-scan")
+{
+    PlaybackRegression.AuditDirectory(args[1], args[2]);
+}
+else if (args.Length == 2 && args[0] == "--reference")
 {
     using var fixture = JsonDocument.Parse(File.ReadAllText(args[1]));
     int samples = 0;
