@@ -18,8 +18,9 @@ if errorlevel 1 (
 )
 
 echo Building KH1 ARD Viewer for Windows x64...
-dotnet publish "%PROJECT%" -c Release -r win-x64 --self-contained false ^
-    -p:PublishSingleFile=true -p:DebugType=None -p:DebugSymbols=false ^
+dotnet publish "%PROJECT%" -c Release -r win-x64 --no-self-contained ^
+    -p:SelfContained=false -p:PublishSingleFile=true ^
+    -p:DebugType=None -p:DebugSymbols=false ^
     -o "%OUTPUT%"
 if errorlevel 1 (
     echo ERROR: Publish failed. See the output above for details.
