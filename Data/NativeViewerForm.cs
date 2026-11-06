@@ -874,6 +874,8 @@ internal sealed class NativeGlViewport : Panel
     private const uint GlBlend = 0x0BE2;
     private const uint GlSrcAlpha = 0x0302;
     private const uint GlOneMinusSrcAlpha = 0x0303;
+    private const uint GlAlphaTest = 0x0BC0;
+    private const uint GlGreaterEqual = 0x0206;
     private const uint GlProjection = 0x1701;
     private const uint GlModelview = 0x1700;
     private const uint GlTriangles = 0x0004;
@@ -888,7 +890,7 @@ internal sealed class NativeGlViewport : Panel
     private const int GlTextureWrapT = 0x2803;
     private const int GlLinear = 0x2601;
     private const int GlRepeat = 0x2901;
-    private const int GlClamp = 0x2900;
+    private const int GlClampToEdge = 0x812F;
     private const uint GlUnpackAlignment = 0x0CF5;
     private const uint GlColorMaterial = 0x0B57;
     private const uint GlFrontAndBack = 0x0408;
@@ -1113,8 +1115,8 @@ internal sealed class NativeGlViewport : Panel
             GlBindTexture(GlTexture2D, (uint)_textureIds[i]);
             GlTexParameteri(GlTexture2D, GlTextureMinFilter, GlLinear);
             GlTexParameteri(GlTexture2D, GlTextureMagFilter, GlLinear);
-            GlTexParameteri(GlTexture2D, GlTextureWrapS, texture.Repeat ? GlRepeat : GlClamp);
-            GlTexParameteri(GlTexture2D, GlTextureWrapT, texture.Repeat ? GlRepeat : GlClamp);
+            GlTexParameteri(GlTexture2D, GlTextureWrapS, texture.Repeat ? GlRepeat : GlClampToEdge);
+            GlTexParameteri(GlTexture2D, GlTextureWrapT, texture.Repeat ? GlRepeat : GlClampToEdge);
             GlTexImage2D(GlTexture2D, 0, (int)GlRgba, texture.Width, texture.Height, 0,
                 GlRgba, GlUnsignedByte, rgba);
         }
@@ -1217,6 +1219,9 @@ internal sealed class NativeGlViewport : Panel
     private void DrawModel()
     {
         if (_model == null) return;
+        GlDisable(GlBlend);
+        GlEnable(GlAlphaTest);
+        GlAlphaFunc(GlGreaterEqual, 0.5f);
         int vertexOffset = 0;
         foreach (ArdViewerMesh mesh in _model.Meshes)
         {
@@ -1225,6 +1230,9 @@ internal sealed class NativeGlViewport : Panel
             {
                 GlEnable(GlTexture2D);
                 GlBindTexture(GlTexture2D, (uint)_textureIds[mesh.Texture]);
+                int wrap = mesh.ClampTexture || !_model.Textures[mesh.Texture].Repeat ? GlClampToEdge : GlRepeat;
+                GlTexParameteri(GlTexture2D, GlTextureWrapS, wrap);
+                GlTexParameteri(GlTexture2D, GlTextureWrapT, wrap);
             }
             else GlDisable(GlTexture2D);
             GlBegin(GlTriangles);
@@ -1238,6 +1246,8 @@ internal sealed class NativeGlViewport : Panel
             GlEnd();
             vertexOffset += mesh.Positions.Length / 3;
         }
+        GlDisable(GlAlphaTest);
+        GlEnable(GlBlend);
     }
 
     private void DrawBones()
@@ -1338,6 +1348,7 @@ internal sealed class NativeGlViewport : Panel
     [DllImport("opengl32.dll", EntryPoint = "glDisable")] private static extern void GlDisable(uint cap);
     [DllImport("opengl32.dll", EntryPoint = "glCullFace")] private static extern void GlCullFaceMode(uint mode);
     [DllImport("opengl32.dll", EntryPoint = "glBlendFunc")] private static extern void GlBlendFunc(uint src, uint dst);
+    [DllImport("opengl32.dll", EntryPoint = "glAlphaFunc")] private static extern void GlAlphaFunc(uint function, float reference);
     [DllImport("opengl32.dll", EntryPoint = "glColorMaterial")] private static extern void GlColorMaterialFunc(uint face, uint mode);
     [DllImport("opengl32.dll", EntryPoint = "glPixelStorei")] private static extern void GlPixelStorei(uint pname, int value);
     [DllImport("opengl32.dll", EntryPoint = "glGenTextures")] private static extern void GlGenTextures(int count, [Out] int[] ids);
@@ -1374,11 +1385,58 @@ internal static class NativeGltfExporter
         var accessors = new List<Dictionary<string, object>>();
         var meshes = new List<object>();
         var meshUsesSkin = new List<bool>();
+        var samplers = new List<object>();
+        var textures = new List<object>();
+        var materials = new List<object>();
+        var materialVariants = new Dictionary<(int Texture, bool Clamp), int>();
+        int untexturedMaterial = -1;
         List<float[]>? msetLocals = msetSectionIndex >= 0 &&
             msetSectionIndex < model.MsetSections.Count &&
             model.MsetSections[msetSectionIndex].JointLocalMatrices.Count == model.Joints.Count
                 ? ArdViewer.BuildMsetJointLocals(model.Joints, model.MsetSections[msetSectionIndex], msetFrame)
                 : null;
+
+        int GetMaterialIndex(ArdViewerMesh source)
+        {
+            int textureIndex = source.Texture;
+            if (textureIndex < 0 || textureIndex >= model.Textures.Count)
+            {
+                if (untexturedMaterial >= 0) return untexturedMaterial;
+                untexturedMaterial = materials.Count;
+                materials.Add(new
+                {
+                    name = "Untextured",
+                    pbrMetallicRoughness = new { baseColorFactor = new[] { 1, 1, 1, 1 }, metallicFactor = 0, roughnessFactor = 1 },
+                    alphaMode = "MASK",
+                    alphaCutoff = 0.5
+                });
+                return untexturedMaterial;
+            }
+
+            ArdViewerTexture texture = model.Textures[textureIndex];
+            bool clamp = source.ClampTexture || !texture.Repeat;
+            var key = (textureIndex, clamp);
+            if (materialVariants.TryGetValue(key, out int existing)) return existing;
+            int samplerIndex = samplers.Count;
+            samplers.Add(new
+            {
+                magFilter = 9729, minFilter = 9729,
+                wrapS = clamp ? 33071 : 10497,
+                wrapT = clamp ? 33071 : 10497
+            });
+            int textureVariant = textures.Count;
+            textures.Add(new { sampler = samplerIndex, source = textureIndex });
+            int materialIndex = materials.Count;
+            materials.Add(new
+            {
+                name = $"Material {textureIndex + 1}" + (clamp && texture.Repeat ? " (clamp)" : ""),
+                pbrMetallicRoughness = new { baseColorTexture = new { index = textureVariant }, metallicFactor = 0, roughnessFactor = 1 },
+                alphaMode = "MASK",
+                alphaCutoff = 0.5
+            });
+            materialVariants.Add(key, materialIndex);
+            return materialIndex;
+        }
 
         int AddAccessor(byte[] bytes, int componentType, string type, int count, int target,
             bool normalized = false, float[]? min = null, float[]? max = null)
@@ -1473,8 +1531,7 @@ internal static class NativeGltfExporter
                 attributes["WEIGHTS_0"] = AddAccessor(ToBytes(attributesForSkin.Weights), 5126,
                     "VEC4", source.JointIds.Length, 34962);
             }
-            int material = source.Texture >= 0 && source.Texture < model.Textures.Count
-                ? source.Texture : model.Textures.Count;
+            int material = GetMaterialIndex(source);
             meshes.Add(new Dictionary<string, object>
             {
                 ["name"] = source.Name,
@@ -1543,24 +1600,6 @@ internal static class NativeGltfExporter
             File.WriteAllBytes(Path.Combine(outputDirectory, fileName), BitmapPngBytes(texture));
             return new { name = texture.Name, uri = fileName };
         }).ToArray();
-        var samplers = model.Textures.Select(texture => new
-        {
-            magFilter = 9729, minFilter = 9729,
-            wrapS = texture.Repeat ? 10497 : 33071,
-            wrapT = texture.Repeat ? 10497 : 33071
-        }).ToArray();
-        var textures = model.Textures.Select((_, i) => new { sampler = i, source = i }).ToArray();
-        var materials = model.Textures.Select((_, i) => new
-        {
-            name = $"Material {i + 1}",
-            pbrMetallicRoughness = new { baseColorTexture = new { index = i }, metallicFactor = 0, roughnessFactor = 1 },
-            alphaMode = "BLEND"
-        }).Cast<object>().Append(new
-        {
-            name = "Untextured",
-            pbrMetallicRoughness = new { baseColorFactor = new[] { 1, 1, 1, 1 }, metallicFactor = 0, roughnessFactor = 1 }
-        }).ToArray();
-
         var gltf = new Dictionary<string, object>
         {
             ["asset"] = new { version = "2.0", generator = "ARD Extractor native viewer" },

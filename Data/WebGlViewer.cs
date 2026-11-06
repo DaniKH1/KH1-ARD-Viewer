@@ -82,14 +82,14 @@ uniform mat4 uMvp; out vec4 vColor; out vec2 vUv;
 void main(){gl_Position=uMvp*vec4(aPosition,1.0);vColor=aColor;vUv=aUv;}`;
 const fragmentSource=`#version 300 es
 precision mediump float;
-in vec4 vColor; in vec2 vUv; uniform sampler2D uTexture; uniform int uHasTexture;
+in vec4 vColor; in vec2 vUv; uniform sampler2D uTexture; uniform int uHasTexture; uniform int uClampUv; uniform int uAlphaClip;
 out vec4 outColor;
-void main(){outColor=vColor*(uHasTexture==1?texture(uTexture,vUv):vec4(1.0));}`;
+void main(){vec2 uv=uClampUv==1?clamp(vUv,vec2(0.0),vec2(1.0)):vUv;vec4 color=vColor*(uHasTexture==1?texture(uTexture,uv):vec4(1.0));if(uAlphaClip==1){if(color.a<0.5)discard;color.a=1.0;}outColor=color;}`;
 function shader(type,source){const s=gl.createShader(type);gl.shaderSource(s,source);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(s));return s;}
 const program=gl.createProgram();gl.attachShader(program,shader(gl.VERTEX_SHADER,vertexSource));gl.attachShader(program,shader(gl.FRAGMENT_SHADER,fragmentSource));gl.linkProgram(program);
 if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(program));
 gl.useProgram(program);
-const loc={position:gl.getAttribLocation(program,'aPosition'),color:gl.getAttribLocation(program,'aColor'),uv:gl.getAttribLocation(program,'aUv'),mvp:gl.getUniformLocation(program,'uMvp'),tex:gl.getUniformLocation(program,'uTexture'),has:gl.getUniformLocation(program,'uHasTexture')};
+const loc={position:gl.getAttribLocation(program,'aPosition'),color:gl.getAttribLocation(program,'aColor'),uv:gl.getAttribLocation(program,'aUv'),mvp:gl.getUniformLocation(program,'uMvp'),tex:gl.getUniformLocation(program,'uTexture'),has:gl.getUniformLocation(program,'uHasTexture'),clampUv:gl.getUniformLocation(program,'uClampUv'),alphaClip:gl.getUniformLocation(program,'uAlphaClip')};
 gl.enable(gl.DEPTH_TEST);gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.enable(gl.CULL_FACE);gl.cullFace(gl.BACK);gl.frontFace(gl.CCW);gl.clearColor(.055,.067,.086,1);
 const stats=document.getElementById('stats'),archiveList=document.getElementById('archives'),textureGrid=document.getElementById('texture-grid'),textureModal=document.getElementById('texture-modal'),textureLarge=document.getElementById('texture-large'),textureCaption=document.getElementById('texture-caption');
 const archives=new Map(),expandedArchives=new Set();
@@ -142,7 +142,7 @@ function loadModel(index){
   if(model.format==='MDLS')for(let i=1;i<uv.length;i+=2)uv[i]=1-uv[i];
   for(let i=0;i<pos.length;i+=3){for(let a=0;a<3;a++){lo[a]=Math.min(lo[a],pos[i+a]);hi[a]=Math.max(hi[a],pos[i+a]);}}
   vertices+=pos.length/3;triangles+=ind.length/3;
-  gpu.push({p:buffer(gl.ARRAY_BUFFER,pos),positions:pos,basePositions:new Float32Array(pos),jointIds:m.jointIds||[],c:buffer(gl.ARRAY_BUFFER,col),uv:buffer(gl.ARRAY_BUFFER,uv),i:buffer(gl.ELEMENT_ARRAY_BUFFER,ind),count:ind.length,texture:m.texture>=0?textures[m.texture]:null});
+  gpu.push({p:buffer(gl.ARRAY_BUFFER,pos),positions:pos,basePositions:new Float32Array(pos),jointIds:m.jointIds||[],c:buffer(gl.ARRAY_BUFFER,col),uv:buffer(gl.ARRAY_BUFFER,uv),i:buffer(gl.ELEMENT_ARRAY_BUFFER,ind),count:ind.length,texture:m.texture>=0?textures[m.texture]:null,clampUv:m.clampTexture===true});
  }
  if(!Number.isFinite(lo[0]))lo=[-1,-1,-1],hi=[1,1,1];
  center=lo.map((v,i)=>(v+hi[i])/2);radius=Math.max(.01,Math.hypot(hi[0]-lo[0],hi[1]-lo[1],hi[2]-lo[2])/2);distance=radius*2.8;pan=[0,0,0];
@@ -294,12 +294,12 @@ function draw(){
   gl.bindBuffer(gl.ARRAY_BUFFER,grid.p);gl.enableVertexAttribArray(loc.position);gl.vertexAttribPointer(loc.position,3,gl.FLOAT,false,0,0);
   gl.bindBuffer(gl.ARRAY_BUFFER,grid.c);gl.enableVertexAttribArray(loc.color);gl.vertexAttribPointer(loc.color,4,gl.UNSIGNED_BYTE,true,0,0);
   gl.bindBuffer(gl.ARRAY_BUFFER,grid.uv);gl.enableVertexAttribArray(loc.uv);gl.vertexAttribPointer(loc.uv,2,gl.FLOAT,false,0,0);
-  gl.uniform1i(loc.has,0);gl.drawArrays(gl.LINES,0,grid.count);
+  gl.uniform1i(loc.has,0);gl.uniform1i(loc.alphaClip,0);gl.drawArrays(gl.LINES,0,grid.count);
  }
  for(const g of gpu){gl.bindBuffer(gl.ARRAY_BUFFER,g.p);gl.enableVertexAttribArray(loc.position);gl.vertexAttribPointer(loc.position,3,gl.FLOAT,false,0,0);
   gl.bindBuffer(gl.ARRAY_BUFFER,g.c);gl.enableVertexAttribArray(loc.color);gl.vertexAttribPointer(loc.color,4,gl.UNSIGNED_BYTE,true,0,0);
   gl.bindBuffer(gl.ARRAY_BUFFER,g.uv);gl.enableVertexAttribArray(loc.uv);gl.vertexAttribPointer(loc.uv,2,gl.FLOAT,false,0,0);
-  gl.uniform1i(loc.has,g.texture?1:0);if(g.texture){gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,g.texture);gl.uniform1i(loc.tex,0);}
+  gl.uniform1i(loc.has,g.texture?1:0);gl.uniform1i(loc.clampUv,g.clampUv?1:0);gl.uniform1i(loc.alphaClip,1);if(g.texture){gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,g.texture);gl.uniform1i(loc.tex,0);}
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,g.i);gl.drawElements(gl.TRIANGLES,g.count,gl.UNSIGNED_INT,0);
  }
   if(showBones&&models[current].joints.length>1)drawBones(models[current]);
@@ -426,12 +426,25 @@ function makeGltf(model,msetSectionIndex=-1,msetFrame=0){
  let totalLength=0;for(const part of parts)totalLength+=part.length;
  const binary=new Uint8Array(totalLength);let offset=0;for(const part of parts){binary.set(part,offset);offset+=part.length;}
  let binaryString='';for(let i=0;i<binary.length;i+=0x8000)binaryString+=String.fromCharCode(...binary.subarray(i,i+0x8000));
- const samplers=model.textures.map(texture=>({magFilter:9729,minFilter:9987,wrapS:texture.repeat?10497:33071,wrapT:texture.repeat?10497:33071}));
+ const samplers=[],textures=[],materials=[],materialVariants=new Map();
+ function getMaterialIndex(textureIndex,clampUv){
+  if(textureIndex<0)return getUntexturedMaterial();
+  const key=textureIndex+':'+clampUv;if(materialVariants.has(key))return materialVariants.get(key);
+  const texture=model.textures[textureIndex],samplerIndex=samplers.length,textureVariant=textures.length,materialIndex=materials.length;
+  const wrap=texture.repeat&&!clampUv?10497:33071;
+  samplers.push({magFilter:9729,minFilter:9987,wrapS:wrap,wrapT:wrap});
+  textures.push({sampler:samplerIndex,source:textureIndex});
+  materials.push({name:'Material '+(textureIndex+1)+(clampUv?' (clamp)':''),pbrMetallicRoughness:{baseColorTexture:{index:textureVariant},metallicFactor:0,roughnessFactor:1},alphaMode:'MASK',alphaCutoff:0.5});
+  materialVariants.set(key,materialIndex);return materialIndex;
+ }
+ let untexturedMaterial=-1;
+ function getUntexturedMaterial(){
+  if(untexturedMaterial>=0)return untexturedMaterial;
+  untexturedMaterial=materials.length;materials.push({name:'Untextured',pbrMetallicRoughness:{baseColorFactor:[1,1,1,1],metallicFactor:0,roughnessFactor:1},alphaMode:'MASK',alphaCutoff:0.5});return untexturedMaterial;
+ }
+ for(let i=0;i<model.meshes.length;i++){const source=model.meshes[i],textureIndex=Number.isInteger(source.texture)&&source.texture>=0&&source.texture<model.textures.length?source.texture:-1;meshes[i].primitives[0].material=getMaterialIndex(textureIndex,source.clampTexture===true);}
  const textureFiles=model.textures.map((texture,i)=>({fileName:'texture_'+String(i+1).padStart(3,'0')+'.png',data:texturePreviewUrl(texture)}));
  const images=textureFiles.map((file,i)=>({name:model.textures[i].name||file.fileName,uri:file.fileName}));
- const textures=model.textures.map((_,i)=>({sampler:i,source:i}));
- const materials=model.textures.map((_,i)=>({name:'Material '+(i+1),pbrMetallicRoughness:{baseColorTexture:{index:i},metallicFactor:0,roughnessFactor:1},alphaMode:'BLEND'}));
- materials.push({name:'Untextured',pbrMetallicRoughness:{baseColorFactor:[1,1,1,1],metallicFactor:0,roughnessFactor:1}});
  const gltf={asset:{version:'2.0',generator:'ARD Extractor'},scene:0,scenes:[{nodes:sceneNodes}],nodes,meshes,materials,images,textures,samplers,accessors,bufferViews,buffers:[{byteLength,uri:'data:application/octet-stream;base64,'+btoa(binaryString)}]};
  if(skins.length)gltf.skins=skins;
  return {gltf:JSON.stringify(gltf),textureFiles};

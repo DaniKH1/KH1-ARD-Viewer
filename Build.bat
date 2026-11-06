@@ -1,50 +1,42 @@
 @echo off
 setlocal
-cd /d "%~dp0"
 
-if not exist "%~dp0Data\KH1ARDViewer.csproj" (
-    echo Source code was not found in the Data folder.
-    pause
+set "ROOT=%~dp0"
+set "PROJECT=%ROOT%Data\KH1ARDViewer.csproj"
+set "OUTPUT=%ROOT%_build"
+set "APP=%ROOT%KH1 ARD Viewer.exe"
+
+if not exist "%PROJECT%" (
+    echo ERROR: Project file not found: "%PROJECT%"
     exit /b 1
 )
 
 where dotnet >nul 2>nul
 if errorlevel 1 (
-    echo dotnet was not found. Install the .NET 10 SDK to build from source.
-    pause
+    echo ERROR: .NET 10 SDK is required to build the viewer.
     exit /b 1
 )
 
-set "BUILD_DIR=%~dp0_build"
-if exist "%BUILD_DIR%" rmdir /s /q "%BUILD_DIR%"
-
-dotnet publish "%~dp0Data\KH1ARDViewer.csproj" -c Release -r win-x64 --no-self-contained -p:SelfContained=false -p:PublishSingleFile=true -p:DebugType=None -p:DebugSymbols=false -o "%BUILD_DIR%"
+echo Publishing KH1 ARD Viewer for Windows x64...
+dotnet publish "%PROJECT%" -c Release -r win-x64 --self-contained false ^
+    -p:PublishSingleFile=true -p:DebugType=None -p:DebugSymbols=false ^
+    -o "%OUTPUT%"
 if errorlevel 1 (
-    echo Could not build the viewer. Make sure the .NET 10 SDK is installed.
-    pause
+    echo ERROR: Publish failed. See the output above for details.
     exit /b 1
 )
 
-if not exist "%BUILD_DIR%\KH1 ARD Viewer.exe" (
-    echo KH1 ARD Viewer.exe was not created.
-    pause
+if not exist "%OUTPUT%\KH1 ARD Viewer.exe" (
+    echo ERROR: Published executable was not created.
     exit /b 1
 )
 
-copy /y "%BUILD_DIR%\KH1 ARD Viewer.exe" "%~dp0KH1 ARD Viewer.exe" >nul
+copy /y "%OUTPUT%\KH1 ARD Viewer.exe" "%APP%" >nul
 if errorlevel 1 (
-    echo Could not copy the single-file executable into the distribution folder.
-    pause
+    echo ERROR: Could not copy the executable to the repository root.
     exit /b 1
 )
 
-if exist "%~dp0KH1 ARD Viewer.dll" del /q "%~dp0KH1 ARD Viewer.dll"
-if exist "%~dp0KH1 ARD Viewer.deps.json" del /q "%~dp0KH1 ARD Viewer.deps.json"
-if exist "%~dp0KH1 ARD Viewer.runtimeconfig.json" del /q "%~dp0KH1 ARD Viewer.runtimeconfig.json"
-if exist "%BUILD_DIR%" rmdir /s /q "%BUILD_DIR%"
-if exist "%~dp0Data\bin" rmdir /s /q "%~dp0Data\bin"
-if exist "%~dp0Data\obj" rmdir /s /q "%~dp0Data\obj"
-
-echo Build complete: "%~dp0KH1 ARD Viewer.exe"
-
-endlocal
+if exist "%OUTPUT%" rmdir /s /q "%OUTPUT%"
+echo Build complete: "%APP%"
+exit /b 0

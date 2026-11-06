@@ -127,6 +127,12 @@ needed by the renderer, while MFA UV coordinates and decoded texture rows are
 preserved. Unsupported or malformed resources may be skipped; an archive can
 open successfully even if it contains no usable MDLS or MFA models.
 
+Texture alpha uses a 0.5 alpha-clip cutoff rather than blended transparency.
+Meshes with UV coordinates slightly outside the `[0, 1]` range (no more than
+`0.05`) use clamped texture sampling; other meshes retain each texture's
+configured repeat or clamp behavior. glTF exports preserve the same alpha and
+per-mesh sampler settings.
+
 The viewer decodes embedded MMTN references against the containing MDLS
 skeleton. Key headers contain a signed time in 1/256-frame units and an
 interpolation byte: hold, linear, or cubic Hermite. Tangents use the same time

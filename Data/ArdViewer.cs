@@ -40,6 +40,7 @@ internal sealed class ArdViewerMesh
     public float[] Positions { get; set; } = Array.Empty<float>();
     public int[] JointIds { get; set; } = Array.Empty<int>();
     public float[] Uvs { get; set; } = Array.Empty<float>();
+    public bool ClampTexture { get; set; }
     public string Colors { get; set; } = "";
     public int[] Indices { get; set; } = Array.Empty<int>();
     public int Texture { get; set; } = -1;
@@ -280,6 +281,7 @@ internal static class ArdViewer
                 Positions = positions.ToArray(),
                 Colors = Convert.ToBase64String(colors.ToArray()),
                 Uvs = uvs.ToArray(),
+                ClampTexture = HasSlightlyOutOfBoundsUvs(uvs),
                 Indices = indices.ToArray(),
                 JointIds = jointIds,
                 Texture = mesh.TextureIndex >= 0 && mesh.TextureIndex < model.Textures.Count ? mesh.TextureIndex : -1
@@ -364,6 +366,7 @@ internal static class ArdViewer
                 Name = $"{name} / submesh {meshIndex}",
                 Positions = positions.ToArray(),
                 Uvs = uvs.ToArray(),
+                ClampTexture = HasSlightlyOutOfBoundsUvs(uvs),
                 Colors = Convert.ToBase64String(colors.ToArray()),
                 Indices = indices.ToArray(),
                 Texture = mesh.Texture == null ? -1 : source.Textures.IndexOf(mesh.Texture)
@@ -392,6 +395,21 @@ internal static class ArdViewer
         for (int y = 0; y < height; y++)
             Buffer.BlockCopy(rgba, y * row, flipped, (height - y - 1) * row, row);
         return flipped;
+    }
+
+    internal static bool HasSlightlyOutOfBoundsUvs(IReadOnlyList<float> uvs)
+    {
+        const float tolerance = 0.05f;
+        bool outsideUnitRange = false;
+        foreach (float coordinate in uvs)
+        {
+            if (!float.IsFinite(coordinate) || coordinate < -tolerance || coordinate > 1 + tolerance)
+                return false;
+            if (coordinate < 0 || coordinate > 1)
+                outsideUnitRange = true;
+        }
+
+        return outsideUnitRange;
     }
 
     private static List<string> GetModelSlotNames(List<string> resources)

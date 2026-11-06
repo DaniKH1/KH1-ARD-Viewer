@@ -120,6 +120,68 @@ PlaybackRegression.Check(new ArdViewerModel
 }, 0);
 Console.WriteLine("PASS: helper-only Play, timer tick, vertex movement and Pause.");
 
+if (!ArdViewer.HasSlightlyOutOfBoundsUvs([-0.05f, 0, 1, 1.05f]) ||
+    ArdViewer.HasSlightlyOutOfBoundsUvs([0, 0.5f, 1]) ||
+    ArdViewer.HasSlightlyOutOfBoundsUvs([-0.051f, 0.5f]) ||
+    ArdViewer.HasSlightlyOutOfBoundsUvs([float.NaN]))
+    throw new Exception("Selective UV clamp threshold did not match the expected bounds.");
+
+string exportDirectory = Path.Combine(Path.GetTempPath(), "kh1-ard-viewer-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(exportDirectory);
+try
+{
+    var sharedTextureModel = new ArdViewerModel
+    {
+        Textures = [new()
+        {
+            Name = "shared", Width = 1, Height = 1,
+            Rgba = Convert.ToBase64String([255, 255, 255, 255]), Repeat = true
+        }],
+        Meshes =
+        [
+            new()
+            {
+                Name = "clamped", Positions = [0,0,0, 1,0,0, 0,1,0],
+                Uvs = [0,0, 1,0, 0,1], Indices = [0,1,2], Texture = 0,
+                ClampTexture = true,
+                Colors = Convert.ToBase64String(Enumerable.Repeat((byte)255, 12).ToArray())
+            },
+            new()
+            {
+                Name = "repeated", Positions = [0,0,0, 1,0,0, 0,1,0],
+                Uvs = [0,0, 1,0, 0,1], Indices = [0,1,2], Texture = 0,
+                Colors = Convert.ToBase64String(Enumerable.Repeat((byte)255, 12).ToArray())
+            }
+        ]
+    };
+    using var gltf = JsonDocument.Parse(NativeGltfExporter.Create(sharedTextureModel, exportDirectory));
+    var root = gltf.RootElement;
+    var materials = root.GetProperty("materials").EnumerateArray().ToArray();
+    var samplers = root.GetProperty("samplers").EnumerateArray().ToArray();
+    var textures = root.GetProperty("textures").EnumerateArray().ToArray();
+    var meshes = root.GetProperty("meshes").EnumerateArray().ToArray();
+    int clampedMaterial = meshes[0].GetProperty("primitives")[0].GetProperty("material").GetInt32();
+    int repeatedMaterial = meshes[1].GetProperty("primitives")[0].GetProperty("material").GetInt32();
+    int clampedTexture = materials[clampedMaterial].GetProperty("pbrMetallicRoughness")
+        .GetProperty("baseColorTexture").GetProperty("index").GetInt32();
+    int repeatedTexture = materials[repeatedMaterial].GetProperty("pbrMetallicRoughness")
+        .GetProperty("baseColorTexture").GetProperty("index").GetInt32();
+    int clampedSampler = textures[clampedTexture].GetProperty("sampler").GetInt32();
+    int repeatedSampler = textures[repeatedTexture].GetProperty("sampler").GetInt32();
+    if (clampedMaterial == repeatedMaterial ||
+        materials.Any(material => material.GetProperty("alphaMode").GetString() != "MASK" ||
+            material.GetProperty("alphaCutoff").GetDouble() != 0.5) ||
+        samplers.Length != 2 || samplers[clampedSampler].GetProperty("wrapS").GetInt32() != 33071 ||
+        samplers[repeatedSampler].GetProperty("wrapS").GetInt32() != 10497 ||
+        textures.Any(texture => texture.GetProperty("source").GetInt32() != 0))
+        throw new Exception("Native glTF export did not preserve alpha clip and per-mesh sampler variants.");
+}
+finally
+{
+    Directory.Delete(exportDirectory, recursive: true);
+}
+Console.WriteLine("PASS: alpha-clip export, UV threshold, and shared-texture clamp/repeat samplers.");
+
 if (args.Length == 3 && args[0] == "--playback-scan")
 {
     PlaybackRegression.AuditDirectory(args[1], args[2]);
