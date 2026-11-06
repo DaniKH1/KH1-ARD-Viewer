@@ -101,6 +101,25 @@ Near(limbWorlds[1].Translation.X, -0.01f, "IK elbow X");
 Near(limbWorlds[1].Translation.Y, 0, "IK elbow Y");
 Console.WriteLine("PASS: helper-driven orientation and two-bone IK target/elbow positions.");
 
+var helperOnlyJoint = Joint(-1);
+helperOnlyJoint.LocalMatrix = helperOnlyJoint.InverseBindMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+var helperOnlySection = new ArdViewerMsetSection
+{
+    FrameEnd = 120, FramesPerSecond = 60, JointFlags = [0x100a],
+    Helpers = [new() { TransformChannels = [1,1,1,0,0,0,0,0,0] },
+        new() { Parent = 0, TransformChannels = [1,1,1,0,0,0,0,0,0] }],
+    HelperCurves = [new() { Joint = 1, Channel = 8, Keys = [
+        new() { Time = 0, Value = 0, Interpolation = 1 },
+        new() { Time = 60 * 256, Value = 10, Interpolation = 1 }] }]
+};
+helperOnlySection.JointLocalMatrices = ArdViewer.BuildMsetJointLocals([helperOnlyJoint], helperOnlySection, 0);
+PlaybackRegression.Check(new ArdViewerModel
+{
+    Joints = [helperOnlyJoint], MsetSections = [helperOnlySection],
+    Meshes = [new() { Positions = [1,0,0], JointIds = [0] }]
+}, 0);
+Console.WriteLine("PASS: helper-only Play, timer tick, vertex movement and Pause.");
+
 if (args.Length == 2 && args[0] == "--reference")
 {
     using var fixture = JsonDocument.Parse(File.ReadAllText(args[1]));
@@ -112,6 +131,11 @@ if (args.Length == 2 && args[0] == "--reference")
         {
             string name = expected.GetProperty("name").GetString()!;
             var model = models.Single(m => m.Name == name);
+            if (name == "nm_6105")
+            {
+                PlaybackRegression.Check(model, 1);
+                Console.WriteLine("PASS: nm_6105 helper-only animation advances and moves viewport vertices.");
+            }
             var poses = expected.GetProperty("poses");
             foreach (var pose in poses.EnumerateArray())
             {

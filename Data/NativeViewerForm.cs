@@ -762,7 +762,7 @@ internal sealed class NativeViewerForm : Form
         }
 
         ArdViewerMsetSection section = _selected.MsetSections[_activeMsetSection];
-        if (section.Curves.Count == 0 || section.FrameEnd <= 0 || section.FramesPerSecond <= 0)
+        if (!section.HasAnimation || section.FrameEnd <= 0 || section.FramesPerSecond <= 0)
         {
             StopMsetPlayback();
             return;

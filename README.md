@@ -168,6 +168,11 @@ dotnet run --project Tests/AnimationRegression.csproj -c Release -- --scan "C:\p
 
 No game assets are included in the tests.
 
+The native playback regression also invokes the production Play, timer tick,
+and Pause handlers on a hidden form. It verifies that a helper-only clip keeps
+playing, advances its frame, and moves viewport vertices without requiring an
+OpenGL context. The reference run repeats this check with `nm01.ard / nm_6105`.
+
 For an independent comparison, clone the linked KH1-EVDL-TOOLS reference at
 commit `5df63d2`, then generate private fixtures from local game assets:
 
