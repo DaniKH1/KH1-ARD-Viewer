@@ -17,7 +17,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo Publishing KH1 ARD Viewer for Windows x64...
+echo Building KH1 ARD Viewer for Windows x64...
 dotnet publish "%PROJECT%" -c Release -r win-x64 --self-contained false ^
     -p:PublishSingleFile=true -p:DebugType=None -p:DebugSymbols=false ^
     -o "%OUTPUT%"
