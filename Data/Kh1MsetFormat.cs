@@ -1,5 +1,4 @@
 using System.Buffers.Binary;
-using System.Numerics;
 
 namespace Kh1Import;
 
@@ -11,9 +10,20 @@ internal sealed class ArdViewerMsetSection
     public float FramesPerSecond { get; set; }
     public List<ArdViewerMsetChannel> Channels { get; set; } = new();
     public List<ArdViewerMsetCurve> Curves { get; set; } = new();
+    public List<ArdViewerMsetCurve> HelperCurves { get; set; } = new();
+    public List<ArdViewerMsetHelper> Helpers { get; set; } = new();
+    public uint[] JointFlags { get; set; } = Array.Empty<uint>();
     public List<float[]> JointLocalMatrices { get; set; } = new();
     public int UnsupportedCurveCount { get; set; }
+    internal bool HasPose => Channels.Count != 0 || Curves.Count != 0 || Helpers.Count != 0;
+    internal bool HasAnimation => Curves.Count != 0 || HelperCurves.Count != 0;
     internal int Length { get; set; }
+}
+
+internal sealed class ArdViewerMsetHelper
+{
+    public int Parent { get; set; }
+    public float[] TransformChannels { get; set; } = Array.Empty<float>();
 }
 
 internal sealed class ArdViewerMsetChannel
@@ -28,21 +38,52 @@ internal sealed class ArdViewerMsetCurve
     public int Joint { get; set; }
     public int Channel { get; set; }
     public List<ArdViewerMsetKey> Keys { get; set; } = new();
+    public int Before { get; set; }
+    public int After { get; set; }
 
     internal float Sample(float frame)
     {
         if (Keys.Count == 0) return 0;
-        if (frame <= Keys[0].Frame) return Keys[0].Value;
+        // KH1 stores signed 24-bit times in 1/256-frame units, above the
+        // interpolation byte. Tangents are derivatives in those same units.
+        float time = MathF.Truncate(frame * 256);
+        ArdViewerMsetKey first = Keys[0], last = Keys[^1];
+        if (Keys.Count == 1) return first.Value;
+        float span = last.Time - first.Time;
+        if (time < first.Time || time > last.Time)
+        {
+            bool before = time < first.Time;
+            int mode = before ? Before : After;
+            ArdViewerMsetKey edge = before ? first : last;
+            if (mode == 1)
+            {
+                ArdViewerMsetKey a = before ? first : Keys[^2];
+                ArdViewerMsetKey b = before ? Keys[1] : last;
+                float slope = edge.Interpolation == 1 && b.Time != a.Time
+                    ? (b.Value - a.Value) / (b.Time - a.Time)
+                    : before ? edge.InTangent : edge.OutTangent;
+                return edge.Value + (time - edge.Time) * slope;
+            }
+            if (mode != 2 || span <= 0) return edge.Value;
+            time = before
+                ? time + MathF.Ceiling((first.Time - time) / span) * span
+                : time - MathF.Ceiling((time - last.Time) / span) * span;
+        }
+        if (time <= first.Time) return first.Value;
 
         for (int i = 1; i < Keys.Count; i++)
         {
             ArdViewerMsetKey previous = Keys[i - 1];
             ArdViewerMsetKey next = Keys[i];
-            if (frame > next.Frame) continue;
+            if (time > next.Time) continue;
+            if (time == next.Time) return next.Value;
 
-            float duration = next.Frame - previous.Frame;
+            float duration = next.Time - previous.Time;
             if (duration <= 0) return next.Value;
-            float t = Math.Clamp((frame - previous.Frame) / duration, 0, 1);
+            if (previous.Interpolation == 0) return previous.Value;
+            float t = Math.Clamp((time - previous.Time) / duration, 0, 1);
+            if (previous.Interpolation == 1)
+                return previous.Value + t * (next.Value - previous.Value);
             float t2 = t * t;
             float t3 = t2 * t;
             return (2 * t3 - 3 * t2 + 1) * previous.Value +
@@ -57,7 +98,8 @@ internal sealed class ArdViewerMsetCurve
 
 internal sealed class ArdViewerMsetKey
 {
-    public int Frame { get; set; }
+    public int Time { get; set; }
+    public int Interpolation { get; set; }
     public float Value { get; set; }
     public float InTangent { get; set; }
     public float OutTangent { get; set; }
@@ -69,8 +111,6 @@ internal static class Kh1MsetParser
     private const uint Terminator = 0xFFFFFFFF;
     private const int CurveRecordSize = 6;
     private const int KeyRecordSize = 16;
-    private const int MinimumSupportedKeyType = 1;
-    private const int MaximumSupportedKeyType = 4;
 
     internal static List<ArdViewerMsetSection> ReadEmbedded(byte[] modelData, int modelJointCount, int slot)
     {
@@ -159,6 +199,9 @@ internal static class Kh1MsetParser
             uint frameEndValue = ReadUInt32(block, referenceOffset + 4);
             float framesPerSecond = BitConverter.Int32BitsToSingle((int)ReadUInt32(block, referenceOffset + 8));
             uint jointCountValue = ReadUInt32(block, referenceOffset + 0x10);
+            uint flagsOffset = ReadUInt32(block, referenceOffset + 0x14);
+            uint helperCount = ReadUInt32(block, referenceOffset + 0x2c);
+            uint helperOffset = ReadUInt32(block, referenceOffset + 0x30);
             uint channelCountValue = ReadUInt32(block, referenceOffset + 0x34);
             uint channelOffsetValue = ReadUInt32(block, referenceOffset + 0x38);
             uint animationEndOffsetValue = ReadUInt32(block, referenceOffset + 0x3c);
@@ -176,6 +219,38 @@ internal static class Kh1MsetParser
             if (channelCountValue > sectionLength / 8)
             {
                 invalidReferences.Add($"0x{reference:X}: channel count exceeds section bounds");
+                continue;
+            }
+
+            if (!Fits(block, referenceOffset, flagsOffset, jointCountValue, 4) ||
+                !Fits(block, referenceOffset, helperOffset, helperCount, 40))
+            {
+                invalidReferences.Add($"0x{reference:X}: joint flags or helpers exceed section bounds");
+                continue;
+            }
+            var flags = new uint[(int)jointCountValue];
+            for (int i = 0; i < flags.Length; i++)
+                flags[i] = ReadUInt32(block, referenceOffset + (int)flagsOffset + i * 4);
+            var helpers = new List<ArdViewerMsetHelper>();
+            bool invalidHelper = false;
+            for (int i = 0; i < (int)helperCount; i++)
+            {
+                int start = referenceOffset + (int)helperOffset + i * 40;
+                int parent = (int)ReadUInt32(block, start + 12);
+                var values = new float[9];
+                for (int axis = 0; axis < 9; axis++)
+                    values[axis] = BitConverter.Int32BitsToSingle((int)ReadUInt32(block,
+                        start + (axis < 3 ? axis * 4 : 16 + (axis - 3) * 4)));
+                if (values.Any(value => !float.IsFinite(value)) || i > 0 && (parent < 0 || parent >= i))
+                {
+                    invalidHelper = true;
+                    break;
+                }
+                helpers.Add(new ArdViewerMsetHelper { Parent = parent, TransformChannels = values });
+            }
+            if (invalidHelper)
+            {
+                invalidReferences.Add($"0x{reference:X}: invalid helper transform or parent");
                 continue;
             }
 
@@ -240,6 +315,8 @@ internal static class Kh1MsetParser
             }
             bool hasCurves = firstCurveCount != 0 || secondCurveCount != 0;
             uint keyDataEndOffset = channelCountValue != 0 ? channelOffsetValue : animationEndOffsetValue;
+            if (helperCount != 0 && helperOffset >= keyOffsetValue)
+                keyDataEndOffset = Math.Min(keyDataEndOffset, helperOffset);
             if (hasCurves && (keyOffsetValue > keyDataEndOffset ||
                 keyDataEndOffset > sectionLength - referenceOffset))
             {
@@ -251,13 +328,14 @@ internal static class Kh1MsetParser
                 ? (keyDataEndOffset - keyOffsetValue) / KeyRecordSize
                 : 0;
             var curves = new List<ArdViewerMsetCurve>();
+            var helperCurves = new List<ArdViewerMsetCurve>();
             int unsupportedCurveCount = 0;
-            if (!TryReadCurves(block, referenceOffset, (int)jointCountValue, (int)frameEndValue,
+            if (!TryReadCurves(block, referenceOffset, (int)jointCountValue,
                 firstCurveCount, firstCurveOffset, keyOffsetValue, keyLimitValue,
                 curves, ref unsupportedCurveCount, out string curveError) ||
-                !TryReadCurves(block, referenceOffset, (int)jointCountValue, (int)frameEndValue,
+                !TryReadCurves(block, referenceOffset, (int)helperCount,
                 secondCurveCount, secondCurveOffset, keyOffsetValue, keyLimitValue,
-                curves, ref unsupportedCurveCount, out curveError))
+                helperCurves, ref unsupportedCurveCount, out curveError))
             {
                 invalidReferences.Add($"0x{reference:X}: {curveError}");
                 continue;
@@ -269,6 +347,9 @@ internal static class Kh1MsetParser
                 JointCount = (int)jointCountValue,
                 Channels = channels,
                 Curves = curves,
+                HelperCurves = helperCurves,
+                Helpers = helpers,
+                JointFlags = flags,
                 FrameEnd = (int)frameEndValue,
                 FramesPerSecond = framesPerSecond,
                 UnsupportedCurveCount = unsupportedCurveCount,
@@ -290,7 +371,6 @@ internal static class Kh1MsetParser
         ReadOnlySpan<byte> block,
         int referenceOffset,
         int jointCount,
-        int frameEnd,
         uint curveCount,
         uint curveOffset,
         uint keyOffset,
@@ -321,7 +401,7 @@ internal static class Kh1MsetParser
 
             var keys = new List<ArdViewerMsetKey>(keyCount);
             bool unsupported = false;
-            int previousFrame = -1;
+            int previousTime = int.MinValue;
             for (int keyIndex = 0; keyIndex < keyCount; keyIndex++)
             {
                 ulong keyRecordOffsetValue = (ulong)referenceOffset + keyOffset +
@@ -330,28 +410,31 @@ internal static class Kh1MsetParser
                     return Fail($"curve {i} key records exceed section bounds", out error);
 
                 int keyRecordOffset = (int)keyRecordOffsetValue;
-                int keyType = ReadUInt16(block, keyRecordOffset);
-                int frame = ReadUInt16(block, keyRecordOffset + 2);
+                int keyHeader = (int)ReadUInt32(block, keyRecordOffset);
+                int interpolation = keyHeader & 0xff;
+                int time = keyHeader >> 8;
                 float value = BitConverter.Int32BitsToSingle((int)ReadUInt32(block, keyRecordOffset + 4));
                 float inTangent = BitConverter.Int32BitsToSingle((int)ReadUInt32(block, keyRecordOffset + 8));
                 float outTangent = BitConverter.Int32BitsToSingle((int)ReadUInt32(block, keyRecordOffset + 12));
-                if (keyType < MinimumSupportedKeyType || keyType > MaximumSupportedKeyType)
+                if (((channelCode >> 4) & 3) == 3 || (channelCode >> 6) == 3)
                 {
                     unsupported = true;
                     break;
                 }
-                if (frame > frameEnd || frame < previousFrame ||
+                // Curves can contain a support key beyond the clip's playback end.
+                if (time < previousTime ||
                     !float.IsFinite(value) || !float.IsFinite(inTangent) || !float.IsFinite(outTangent))
                     return Fail($"curve {i} has invalid keyframe data", out error);
 
                 keys.Add(new ArdViewerMsetKey
                 {
-                    Frame = frame,
+                    Time = time,
+                    Interpolation = interpolation,
                     Value = value,
                     InTangent = inTangent,
                     OutTangent = outTangent
                 });
-                previousFrame = frame;
+                previousTime = time;
             }
 
             if (unsupported)
@@ -360,7 +443,11 @@ internal static class Kh1MsetParser
                 continue;
             }
 
-            curves.Add(new ArdViewerMsetCurve { Joint = joint, Channel = channel, Keys = keys });
+            curves.Add(new ArdViewerMsetCurve
+            {
+                Joint = joint, Channel = channel, Keys = keys,
+                Before = (channelCode >> 4) & 3, After = channelCode >> 6
+            });
         }
 
         return true;
@@ -371,6 +458,9 @@ internal static class Kh1MsetParser
         error = message;
         return false;
     }
+
+    private static bool Fits(ReadOnlySpan<byte> block, int start, uint offset, uint count, int size) =>
+        count == 0 || offset >= 0x40 && (ulong)start + offset + (ulong)count * (uint)size <= (ulong)block.Length;
 
     private static uint ReadUInt32(ReadOnlySpan<byte> data, int offset) =>
         BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(offset, 4));
