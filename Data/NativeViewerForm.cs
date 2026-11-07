@@ -106,6 +106,8 @@ internal sealed class NativeViewerForm : Form
         BuildViewport(layout);
         layout.SetCellPosition(layout.Controls[0], new TableLayoutPanelCellPosition(0, 0));
         layout.SetCellPosition(layout.Controls[1], new TableLayoutPanelCellPosition(1, 0));
+        Resize += (_, _) => UpdateAnimationsWindowBounds();
+        LocationChanged += (_, _) => UpdateAnimationsWindowBounds();
         _models.AfterSelect += (_, e) =>
         {
             if (e.Node?.Tag is ArdViewerModel model) SelectModel(model);
@@ -1005,6 +1007,7 @@ internal sealed class NativeViewerForm : Form
 
     private void PositionAnimationsWindow(Form window)
     {
+        if (WindowState == FormWindowState.Minimized) return;
         Control parent = _animations.Parent ?? this;
         Rectangle bounds = parent.RectangleToScreen(parent.ClientRectangle);
         Point buttonScreen = _animations.PointToScreen(Point.Empty);
@@ -1019,6 +1022,19 @@ internal sealed class NativeViewerForm : Form
         window.Location = new Point(
             Math.Clamp(x, bounds.Left, maxX),
             Math.Clamp(y, bounds.Top, Math.Min(maxY, Math.Max(bounds.Top, buttonScreen.Y - window.Height - 8))));
+    }
+
+    private void UpdateAnimationsWindowBounds()
+    {
+        if (_animationsWindow is not { IsDisposed: false } window) return;
+        if (WindowState == FormWindowState.Minimized)
+        {
+            window.Hide();
+            return;
+        }
+
+        PositionAnimationsWindow(window);
+        if (!window.Visible) window.Show(this);
     }
 
     private void UpdateMsetControls()
