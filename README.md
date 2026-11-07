@@ -19,15 +19,22 @@ textures, and exports it as a glTF 2.0 file with PNG textures alongside it.
 - Show a live `Files Loaded` count while multiple archives are loading.
 - Remember and automatically reload ARD files from the last selected folder
   when the viewer starts.
-- Expand or collapse each archive's model list, then select a model for viewing.
+- Group recognized archives by world when multiple ARDs are loaded; category
+  headings are bold, expandable, and keep `prize.ard` under **Items** at the
+  bottom of the tree.
+- Expand or collapse each category and archive's model list, then select a
+  model for viewing.
 - Render MDLS and MFA geometry in a native OpenGL viewport.
 - Export rigged MDLS models with their armature, bones, and vertex weights.
 - Orbit, zoom, and pan around the model, with a ground grid for scale and
-  orientation.
+  orientation; right- and middle-button drags pan without rotating.
 - View mesh, vertex, triangle, and texture counts for the selected model.
-- Browse embedded MSET animations in a floating list and scrub their playback.
+- Browse embedded MSET animations in a fixed, title-bar-free list and scrub
+  their playback.
 - Browse decoded model textures and open a larger texture preview.
 - Export the selected model to a glTF 2.0 file with separate PNG textures.
+- Export one or more selected MSET animations as separate `.mset` files.
+- Show a temporary green confirmation after successful model or MSET exports.
 - Start without loading or selecting an archive; the Export button appears
   only after a model is selected.
 
@@ -69,12 +76,14 @@ included. The app remembers the last folder in
 5. Expand an archive using the arrow beside its name, then select a model to
    display it.
 
-When multiple ARD files are loaded together, recognized archive name prefixes
-are grouped into world categories (Agrabah, Wonderland, Disney Castle, Dive into
-the Heart, Destiny Islands, End of the World, Olympus Coliseum, Atlantica,
-Halloween Town, Hollow Bastion, Monstro, 100th Acre Wood, Neverland, Traverse
-Town, Deep Jungle, and Items for `prize.ard`). Unrecognized archives remain
-ungrouped.
+When multiple ARD files are loaded together, recognized archive filename
+prefixes are grouped into world categories: `al` (Agrabah), `aw` (Wonderland),
+`dc` (Disney Castle), `dh` (Dive into the Heart), `di` (Destiny Islands),
+`ew` (End of the World), `he` (Olympus Coliseum), `lm` (Atlantica), `nm`
+(Halloween Town), `pc` (Hollow Bastion), `pi` (Monstro), `po` (100th Acre
+Wood), `pp` (Neverland), `tw` (Traverse Town), and `tz` (Deep Jungle).
+`prize.ard` is placed in **Items**, which remains at the bottom of the tree.
+Unrecognized archives remain ungrouped.
 
 The viewer does not automatically choose a model. Select an individual MDLS or
 MFA entry to activate the viewport, statistics, texture gallery, and Export
@@ -88,12 +97,14 @@ last selected folder.
 | Orbit around the model | Drag with the mouse |
 | Zoom in or out | Mouse wheel |
 | Pan the view | Drag with the right or middle mouse button, or hold Shift while dragging |
-| Show or hide an archive's models | Select the arrow beside the archive name |
+| Show or hide a category's archives or an archive's models | Select its arrow |
 | Restore the default view | Select **Reset camera** |
-| Open or close the fixed MSET animation list | Select **Animations** |
-| Play, pause, or seek an animation | Use **Play/Pause** and the timeline slider |
+| Open or close the fixed MSET animation list | Select **Animations**; select it again to close |
+| Select multiple animations for export | Use Ctrl-click or Shift-click in the animation list |
+| Play, pause, or seek a single animation | Select exactly one animation, then use **Play/Pause** and the timeline slider |
 | Automatically play a selected animation | Enable **Auto Play** in the animation list |
 | Stop at the end or repeat the current animation | Toggle **Loop** in the animation list |
+| Show or hide the skeleton | Select **Show bones** / **Hide bones** |
 | Inspect a texture | Select a texture thumbnail |
 | Close the enlarged texture preview | Press Escape or click outside the preview |
 
@@ -115,10 +126,15 @@ For MDLS models with embedded MSET data, open **Animations** and select one or
 more entries. **Export selected MSETS...** writes each selected animation as
 its own `.mset` file in the same model-specific extraction folder as the glTF
 export. Each file retains the original MMTN data and isolates its corresponding
-animation reference. **Play** is shown only when exactly one animation is
-selected.
+animation reference. The export button appears when one or more animations are
+selected; **Play** appears only when exactly one is selected. Successful model
+and MSET exports show a green confirmation near the top of the viewer, which
+fades after five seconds.
 The animation list identifies entries by index and MMTN offset; no internal
-animation name is currently decoded from these blocks.
+animation name is currently decoded from these blocks. The list is fixed above
+the **Animations** button, has no title bar or close button, and closes when
+that button is selected again. The playback slider, frame counter, and Play
+button are positioned beside **Animations**.
 
 When importing a skinned export in Blender, its glTF importer may create a
 hidden `_not_exported` collection with icospheres to display custom bone shapes.
@@ -173,6 +189,10 @@ pose and armature, including the current animation frame when exporting during
 playback. Poses are evaluated independently from the clip's initial state;
 runtime actor placement, gameplay look-at targets and ground collision IK are
 not simulated.
+
+The animation list supports multiple selection for export. Playback requires
+exactly one selected clip. The camera's far clipping distance is extended for
+long-range viewing; the mouse wheel controls zoom.
 
 The MMTN key layout and skeleton flag semantics were cross-checked against
 [KH1-EVDL-TOOLS's animation implementation](https://github.com/gaithern/KH1-EVDL-TOOLS/tree/5df63d2/anim).
@@ -236,6 +256,12 @@ To build the viewer without launching it, run:
 ```text
 Build.bat
 ```
+
+The script forces .NET CLI and compiler messages to English and requests
+detailed MSBuild verbosity so restore, compile, and publish task progress is
+visible. It publishes the framework-dependent single-file executable to a
+temporary build folder, copies it to the repository root, and removes that
+temporary folder.
 
 Alternatively, to build into a separate `_publish` folder, open a terminal in
 this folder and run:
