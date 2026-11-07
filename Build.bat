@@ -5,6 +5,8 @@ set "ROOT=%~dp0"
 set "PROJECT=%ROOT%Data\KH1ARDViewer.csproj"
 set "OUTPUT=%ROOT%_build"
 set "APP=%ROOT%KH1 ARD Viewer.exe"
+set "DOTNET_CLI_UI_LANGUAGE=en-US"
+set "VSLANG=1033"
 
 if not exist "%PROJECT%" (
     echo ERROR: Project file not found: "%PROJECT%"
@@ -21,6 +23,7 @@ echo Building KH1 ARD Viewer for Windows x64...
 dotnet publish "%PROJECT%" -c Release -r win-x64 --no-self-contained ^
     -p:SelfContained=false -p:PublishSingleFile=true ^
     -p:DebugType=None -p:DebugSymbols=false ^
+    -v:detailed ^
     -o "%OUTPUT%"
 if errorlevel 1 (
     echo ERROR: Publish failed. See the output above for details.

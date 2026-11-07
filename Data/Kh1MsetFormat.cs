@@ -1,10 +1,13 @@
 using System.Buffers.Binary;
+using System.Text.Json.Serialization;
 
 namespace Kh1Import;
 
 internal sealed class ArdViewerMsetSection
 {
     public int Offset { get; set; }
+    [JsonIgnore]
+    public uint ReferenceValue { get; set; }
     public int JointCount { get; set; }
     public int FrameEnd { get; set; }
     public float FramesPerSecond { get; set; }
@@ -15,6 +18,8 @@ internal sealed class ArdViewerMsetSection
     public uint[] JointFlags { get; set; } = Array.Empty<uint>();
     public List<float[]> JointLocalMatrices { get; set; } = new();
     public int UnsupportedCurveCount { get; set; }
+    [JsonIgnore]
+    public byte[] RawData { get; set; } = Array.Empty<byte>();
     internal bool HasPose => Channels.Count != 0 || Curves.Count != 0 || Helpers.Count != 0;
     internal bool HasAnimation => Curves.Count != 0 || HelperCurves.Count != 0;
     internal int Length { get; set; }
@@ -344,6 +349,7 @@ internal static class Kh1MsetParser
             sections.Add(new ArdViewerMsetSection
             {
                 Offset = offset,
+                ReferenceValue = reference,
                 JointCount = (int)jointCountValue,
                 Channels = channels,
                 Curves = curves,
@@ -353,7 +359,8 @@ internal static class Kh1MsetParser
                 FrameEnd = (int)frameEndValue,
                 FramesPerSecond = framesPerSecond,
                 UnsupportedCurveCount = unsupportedCurveCount,
-                Length = sectionLength
+                Length = sectionLength,
+                RawData = block.ToArray()
             });
         }
 

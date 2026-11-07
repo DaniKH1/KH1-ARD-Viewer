@@ -46,7 +46,7 @@ namespace Kh1Import
     public class MdlsImage
     {
         public int Width, Height;
-        public byte[] Rgba; // decoded RGBA32, row 0 = top (same convention as Kh1TextureBlock.Pixels)
+        public byte[] Rgba = Array.Empty<byte>(); // decoded RGBA32, row 0 = top (same convention as Kh1TextureBlock.Pixels)
     }
 
     public class MdlsModel

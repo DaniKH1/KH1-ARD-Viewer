@@ -18,14 +18,22 @@ internal sealed class NativeViewerForm : Form
     private readonly Label _status = new();
     private readonly Label _loadProgress = new();
     private readonly Label _stats = new();
+    private readonly Label _exportToast = new();
     private readonly NativeActionButton _export = new();
+    private readonly NativeActionButton _exportMset = new();
     private readonly NativeActionButton _bones = new();
-    private readonly NativeActionButton _msetPose = new();
+    private readonly NativeActionButton _animations = new();
     private readonly NativeActionButton _msetPlay = new();
+    private readonly TrackBar _msetTimeline = new();
+    private readonly Label _msetTime = new();
+    private readonly System.Windows.Forms.Timer _exportToastTimer = new() { Interval = 50 };
+    private readonly NativeActionButton _resetCamera = new();
     private readonly System.Windows.Forms.Timer _msetPlaybackTimer = new() { Interval = 16 };
     private readonly Dictionary<ArdViewerModel, TreeNode> _nodes = new();
+    private readonly Dictionary<string, TreeNode> _archiveCategories = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<ArdViewerModel> _allModels = new();
     private System.Drawing.Icon? _applicationIcon;
+    private Font? _categoryFont;
     private bool _isLoading;
     private string? _lastFolder;
     private string? _settingsWarning;
@@ -33,6 +41,20 @@ internal sealed class NativeViewerForm : Form
     private int _activeMsetSection = -1;
     private float _activeMsetFrame;
     private long _msetPlaybackStart;
+    private bool _updatingMsetTimeline;
+    private bool _updatingMsetAnimationList;
+    private bool _hasMsetTimelineSpace;
+    private bool _autoPlay;
+    private bool _loop = true;
+    private bool _allowAnimationsWindowClose;
+    private DateTime _exportToastShownAt;
+    private Form? _animationsWindow;
+    private ListBox? _animationsList;
+
+    private sealed record MsetAnimationItem(int SectionIndex, string DisplayName)
+    {
+        public override string ToString() => DisplayName;
+    }
 
     private static string LastFolderSettingsPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -92,7 +114,7 @@ internal sealed class NativeViewerForm : Form
         _models.AfterCollapse += (_, e) => UpdateArchiveNodeLabel(e.Node);
         _models.NodeMouseClick += (_, e) =>
         {
-            if (e.Node?.Tag is not string || e.Node.Nodes.Count == 0) return;
+            if (e.Node == null || e.Node.Nodes.Count == 0) return;
             if (e.Node.IsExpanded) e.Node.Collapse();
             else e.Node.Expand();
         };
@@ -164,6 +186,7 @@ internal sealed class NativeViewerForm : Form
             Text = "TEXTURES",
             Dock = DockStyle.Fill,
             ForeColor = Color.FromArgb(170, 180, 195),
+            Font = new Font(Font.FontFamily, Font.Size + 1F, FontStyle.Bold),
             TextAlign = ContentAlignment.MiddleCenter
         }, 0, 2);
 
@@ -198,9 +221,18 @@ internal sealed class NativeViewerForm : Form
 
     private static void UpdateArchiveNodeLabel(TreeNode? node)
     {
-        if (node == null || node.Tag is not string || node.Nodes.Count == 0) return;
-        node.Text = $"{(node.IsExpanded ? "▾" : "▸")} {Path.GetFileName(node.Name)}";
+        if (node == null || node.Nodes.Count == 0) return;
+        string? label = node.Tag switch
+        {
+            ArchiveCategoryTag category => category.Name,
+            string archivePath => Path.GetFileName(archivePath),
+            _ => null
+        };
+        if (label is not null)
+            node.Text = $"{(node.IsExpanded ? "▾" : "▸")} {label}";
     }
+
+    private sealed record ArchiveCategoryTag(string Name);
 
     private void BuildViewport(TableLayoutPanel parent)
     {
@@ -210,9 +242,19 @@ internal sealed class NativeViewerForm : Form
         _viewport.Dock = DockStyle.Fill;
         stage.Controls.Add(_viewport);
 
-        _stats.Size = new Size(196, 100);
-        _stats.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        _stats.Location = new Point(Math.Max(0, stage.ClientSize.Width - _stats.Width - 12), 12);
+        _exportToast.Size = new Size(440, 34);
+        _exportToast.Anchor = AnchorStyles.Top;
+        _exportToast.ForeColor = Color.FromArgb(89, 220, 133);
+        _exportToast.BackColor = Color.Transparent;
+        _exportToast.Font = new Font(Font, FontStyle.Bold);
+        _exportToast.TextAlign = ContentAlignment.MiddleCenter;
+        _exportToast.Visible = false;
+        stage.Controls.Add(_exportToast);
+        _exportToast.BringToFront();
+        _exportToastTimer.Tick += (_, _) => FadeExportToast();
+
+        _stats.Size = new Size(170, 116);
+        _stats.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
         _stats.BackColor = Color.FromArgb(24, 29, 37);
         _stats.ForeColor = Color.FromArgb(197, 207, 221);
         _stats.Padding = new Padding(8);
@@ -221,7 +263,6 @@ internal sealed class NativeViewerForm : Form
         _stats.Visible = false;
         stage.Controls.Add(_stats);
         _stats.BringToFront();
-        stage.Resize += (_, _) => _stats.Location = new Point(Math.Max(0, stage.ClientSize.Width - _stats.Width - 12), 12);
 
         _export.Text = "Export";
         StyleButton(_export);
@@ -235,13 +276,24 @@ internal sealed class NativeViewerForm : Form
         stage.Controls.Add(_export);
         _export.BringToFront();
 
+        _exportMset.Text = "Export selected MSETS...";
+        StyleButton(_exportMset);
+        _exportMset.Size = new Size(190, 38);
+        _exportMset.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+        _exportMset.Location = new Point(14, 58);
+        _exportMset.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+        _exportMset.Visible = false;
+        _exportMset.Click += (_, _) => ExportSelectedMsets();
+        stage.Controls.Add(_exportMset);
+        _exportMset.BringToFront();
+
         _bones.Text = "Show bones";
         StyleButton(_bones);
         _bones.Size = new Size(124, 38);
         _bones.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
         _bones.Location = new Point(126, 14);
         _bones.Anchor = AnchorStyles.Top | AnchorStyles.Left;
-        _bones.Visible = false;
+        _bones.Visible = true;
         _bones.Click += (_, _) =>
         {
             _bones.Text = _viewport.ToggleShowBones() ? "Hide bones" : "Show bones";
@@ -249,50 +301,100 @@ internal sealed class NativeViewerForm : Form
         stage.Controls.Add(_bones);
         _bones.BringToFront();
 
-        _msetPose.Text = "Apply MSET pose";
-        StyleButton(_msetPose);
-        _msetPose.Size = new Size(160, 38);
-        _msetPose.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
-        _msetPose.Location = new Point(stage.ClientSize.Width - _msetPose.Width - 190, stage.ClientSize.Height - _msetPose.Height - 14);
-        _msetPose.Anchor = AnchorStyles.Right | AnchorStyles.Bottom;
-        _msetPose.Visible = false;
-        _msetPose.Click += (_, _) => ToggleMsetPose();
-        stage.Controls.Add(_msetPose);
-        _msetPose.BringToFront();
+        _animations.Text = "Animations";
+        StyleButton(_animations);
+        _animations.Size = new Size(126, 38);
+        _animations.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+        _animations.Anchor = AnchorStyles.Right | AnchorStyles.Bottom;
+        _animations.Visible = false;
+        _animations.Click += (_, _) => ShowMsetAnimations();
+        stage.Controls.Add(_animations);
+        _animations.BringToFront();
 
         _msetPlay.Text = "Play";
         StyleButton(_msetPlay);
-        _msetPlay.Size = new Size(88, 38);
+        _msetPlay.Size = new Size(76, 38);
         _msetPlay.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
-        _msetPlay.Location = new Point(stage.ClientSize.Width - _msetPose.Width - _msetPlay.Width - 198,
-            stage.ClientSize.Height - _msetPlay.Height - 14);
-        _msetPlay.Anchor = AnchorStyles.Right | AnchorStyles.Bottom;
+        _msetPlay.Anchor = AnchorStyles.Left | AnchorStyles.Bottom;
         _msetPlay.Visible = false;
         _msetPlay.Click += (_, _) => ToggleMsetPlayback();
         stage.Controls.Add(_msetPlay);
         _msetPlay.BringToFront();
+
+        _msetTime.AutoSize = false;
+        _msetTime.Size = new Size(82, 28);
+        _msetTime.Anchor = AnchorStyles.Left | AnchorStyles.Bottom;
+        _msetTime.ForeColor = Color.FromArgb(197, 207, 221);
+        _msetTime.BackColor = Color.Transparent;
+        _msetTime.TextAlign = ContentAlignment.MiddleCenter;
+        _msetTime.Visible = false;
+        stage.Controls.Add(_msetTime);
+        _msetTime.BringToFront();
+
+        _msetTimeline.Minimum = 0;
+        _msetTimeline.Maximum = 1000;
+        _msetTimeline.SmallChange = 1;
+        _msetTimeline.LargeChange = 50;
+        _msetTimeline.TickStyle = TickStyle.None;
+        _msetTimeline.Height = 38;
+        _msetTimeline.BackColor = stage.BackColor;
+        _msetTimeline.Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom;
+        _msetTimeline.Visible = false;
+        _msetTimeline.MouseDown += (_, _) =>
+        {
+            if (_msetPlaybackTimer.Enabled) StopMsetPlayback();
+        };
+        _msetTimeline.ValueChanged += (_, _) =>
+        {
+            if (_updatingMsetTimeline || _selected == null ||
+                _activeMsetSection < 0 || _activeMsetSection >= _selected.MsetSections.Count)
+                return;
+            int sliderValue = _msetTimeline.Value;
+            if (_msetPlaybackTimer.Enabled)
+            {
+                _msetPlaybackTimer.Stop();
+                _msetPlay.Text = "Play";
+            }
+            ArdViewerMsetSection section = _selected.MsetSections[_activeMsetSection];
+            _activeMsetFrame = sliderValue / (float)_msetTimeline.Maximum * section.FrameEnd;
+            _viewport.SetMsetAnimationFrame(_activeMsetSection, _activeMsetFrame);
+            UpdateMsetTimeline(section);
+            UpdateMsetControls();
+        };
+        stage.Controls.Add(_msetTimeline);
+        _msetTimeline.BringToFront();
         _msetPlaybackTimer.Tick += (_, _) => AdvanceMsetPose();
 
-        NativeActionButton reset = new()
-        {
-            Text = "Reset camera",
-            Size = new Size(162, 38),
-            Font = new Font("Segoe UI", 9F, FontStyle.Bold),
-            Anchor = AnchorStyles.Right | AnchorStyles.Bottom
-        };
-        StyleButton(reset);
-        reset.Location = new Point(stage.ClientSize.Width - reset.Width - 14, stage.ClientSize.Height - reset.Height - 14);
-        reset.Click += (_, _) => _viewport.ResetCamera();
-        stage.Controls.Add(reset);
-        reset.BringToFront();
-        stage.Resize += (_, _) =>
-        {
-            reset.Location = new Point(stage.ClientSize.Width - reset.Width - 14, stage.ClientSize.Height - reset.Height - 14);
-            _msetPose.Location = new Point(stage.ClientSize.Width - reset.Width - _msetPose.Width - 28,
-                stage.ClientSize.Height - _msetPose.Height - 14);
-            _msetPlay.Location = new Point(stage.ClientSize.Width - reset.Width - _msetPose.Width - _msetPlay.Width - 36,
-                stage.ClientSize.Height - _msetPlay.Height - 14);
-        };
+        _resetCamera.Text = "Reset camera";
+        _resetCamera.Size = new Size(162, 38);
+        _resetCamera.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+        _resetCamera.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        StyleButton(_resetCamera);
+        _resetCamera.Click += (_, _) => _viewport.ResetCamera();
+        stage.Controls.Add(_resetCamera);
+        _resetCamera.BringToFront();
+        stage.Resize += (_, _) => LayoutViewportControls(stage);
+        LayoutViewportControls(stage);
+    }
+
+    private void LayoutViewportControls(Panel stage)
+    {
+        int bottom = Math.Max(10, stage.ClientSize.Height - 48);
+        _stats.Location = new Point(12, Math.Max(10, stage.ClientSize.Height - _stats.Height - 16));
+        _animations.Location = new Point(stage.ClientSize.Width - _animations.Width - 12, bottom);
+        _msetPlay.Location = new Point(_animations.Left - _msetPlay.Width - 8, bottom);
+        _msetTime.Location = new Point(_msetPlay.Left - _msetTime.Width - 8, bottom + 5);
+        if (_animationsWindow is { IsDisposed: false, Visible: true })
+            PositionAnimationsWindow(_animationsWindow);
+
+        int timelineWidth = Math.Min(260, _msetTime.Left - 8 - 12);
+        _hasMsetTimelineSpace = timelineWidth >= 80;
+        _msetTimeline.Width = Math.Max(1, timelineWidth);
+        _msetTimeline.Location = new Point(_msetTime.Left - _msetTimeline.Width - 8, bottom);
+        _msetTimeline.Visible = _hasMsetTimelineSpace && _activeMsetSection >= 0;
+        _msetTime.Visible = _hasMsetTimelineSpace && _activeMsetSection >= 0;
+        _resetCamera.Location = new Point(stage.ClientSize.Width - _resetCamera.Width - 14, 14);
+        _exportToast.Location = new Point((stage.ClientSize.Width - _exportToast.Width) / 2, 14);
     }
 
     private static Button MakeButton(string text)
@@ -436,6 +538,7 @@ internal sealed class NativeViewerForm : Form
         if (_isLoading) return;
         string[] paths = archivePaths.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         if (paths.Length == 0) return;
+        bool categorizeArchives = paths.Length > 1;
 
         _isLoading = true;
         _archiveActions.Enabled = false;
@@ -458,9 +561,35 @@ internal sealed class NativeViewerForm : Form
                     _loadProgress.Text = $"{loadedCount} / {paths.Length} Files Loaded";
                     continue;
                 }
-                AddArchive(path, loaded);
+                TreeNode? categoryNode = null;
+                string? categoryName = categorizeArchives
+                    ? NativeArchiveCategories.GetCategory(path)
+                    : null;
+                if (categoryName is not null)
+                {
+                    if (!_archiveCategories.TryGetValue(categoryName, out categoryNode))
+                    {
+                        categoryNode = new TreeNode(categoryName)
+                        {
+                            Name = $"category:{categoryName}",
+                            Tag = new ArchiveCategoryTag(categoryName),
+                            ForeColor = Color.FromArgb(238, 242, 248)
+                        };
+                        _categoryFont ??= new Font(_models.Font, FontStyle.Bold);
+                        categoryNode.NodeFont = _categoryFont;
+                        categoryNode.Text = $"▸ {categoryName}";
+                        _archiveCategories.Add(categoryName, categoryNode);
+                        _models.Nodes.Add(categoryNode);
+                    }
+                }
+                AddArchive(path, loaded, categoryNode);
                 loadedCount++;
                 _loadProgress.Text = $"{loadedCount} / {paths.Length} Files Loaded";
+            }
+            if (_archiveCategories.TryGetValue("Items", out TreeNode? itemsCategory))
+            {
+                itemsCategory.Remove();
+                _models.Nodes.Add(itemsCategory);
             }
         }
         finally
@@ -481,7 +610,7 @@ internal sealed class NativeViewerForm : Form
             _status.Text += $" · {_settingsWarning}";
     }
 
-    private void AddArchive(string path, List<ArdViewerModel> loaded)
+    private void AddArchive(string path, List<ArdViewerModel> loaded, TreeNode? categoryNode)
     {
         if (loaded.Count == 0) return;
 
@@ -501,7 +630,7 @@ internal sealed class NativeViewerForm : Form
             _allModels.Add(model);
         }
         archiveNode.Text = $"▸ {archiveName}";
-        _models.Nodes.Add(archiveNode);
+        (categoryNode?.Nodes ?? _models.Nodes).Add(archiveNode);
     }
 
     private void SelectModel(ArdViewerModel model)
@@ -510,18 +639,22 @@ internal sealed class NativeViewerForm : Form
         _selected = model;
         _activeMsetSection = -1;
         _activeMsetFrame = 0;
+        RefreshMsetAnimationList();
+        if (GetUsableMsetAnimations().Length == 0)
+            CloseMsetAnimationsWindow();
         _viewport.SetModel(model);
-        _bones.Visible = model.Joints.Count > 1;
+        _bones.Visible = true;
         _bones.Text = _viewport.BonesVisible ? "Hide bones" : "Show bones";
         _export.Enabled = true;
         _export.Visible = true;
+        _exportMset.Visible = false;
         _stats.Visible = true;
         int vertices = model.Meshes.Sum(mesh => mesh.Positions.Length / 3);
         int triangles = model.Meshes.Sum(mesh => mesh.Indices.Length / 3);
         int msetChannels = model.MsetSections.Sum(section => section.Channels.Count);
         int msetCurves = model.MsetSections.Sum(section => section.Curves.Count + section.HelperCurves.Count);
         _stats.Text = $"Meshes: {model.Meshes.Count}\r\nVertices: {vertices:N0}\r\nTriangles: {triangles:N0}\r\nTextures: {model.Textures.Count}\r\nMSET data: {model.MsetSections.Count} sections / {msetChannels} channels / {msetCurves} curves";
-        UpdateMsetPoseButton();
+        UpdateMsetControls();
         _status.Text = $"{model.Format} / {model.Name} · {model.Archive}";
         _textures.Controls.Clear();
         for (int i = 0; i < model.Textures.Count; i++)
@@ -659,6 +792,7 @@ internal sealed class NativeViewerForm : Form
             File.WriteAllText(path, NativeGltfExporter.Create(
                 _selected, directory, _activeMsetSection, _activeMsetFrame), new UTF8Encoding(false));
             _status.Text = $"Exported: {path}";
+            ShowExportConfirmation("Model and texture files exported successfully.");
         }
         catch (Exception error)
         {
@@ -667,51 +801,259 @@ internal sealed class NativeViewerForm : Form
         }
     }
 
-    private void ToggleMsetPose()
+    private void ExportSelectedMsets()
     {
         if (_selected == null) return;
-        if (_msetPlaybackTimer.Enabled) StopMsetPlayback();
-        int[] sections = GetUsableMsetSections();
-        if (sections.Length == 0) return;
-
-        int current = Array.IndexOf(sections, _activeMsetSection);
-        _activeMsetSection = current < 0 ? sections[0] : current + 1 < sections.Length ? sections[current + 1] : -1;
-        _activeMsetFrame = 0;
-        _viewport.SetMsetPose(_activeMsetSection);
-        UpdateMsetPoseButton();
+        int[] sectionIndices = _animationsList is { IsDisposed: false }
+            ? _animationsList.SelectedItems
+                .Cast<MsetAnimationItem>()
+                .Select(item => item.SectionIndex)
+                .ToArray()
+            : Array.Empty<int>();
+        if (sectionIndices.Length == 0) return;
+        try
+        {
+            string directory = GetExportDirectory(_selected);
+            IReadOnlyList<string> files = NativeMsetExporter.Export(_selected, directory, sectionIndices);
+            _status.Text = $"Exported {files.Count} original MSET file(s) to {directory}";
+            ShowExportConfirmation($"Selected MSET file{(files.Count == 1 ? "" : "s")} extracted successfully.");
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException)
+        {
+            MessageBox.Show(this, error.Message, "Could not export MSET data",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
-    private void UpdateMsetPoseButton()
+    private void ShowExportConfirmation(string message)
     {
-        if (_selected == null)
+        _exportToast.Text = message;
+        _exportToast.ForeColor = Color.FromArgb(89, 220, 133);
+        _exportToastShownAt = DateTime.UtcNow;
+        _exportToast.Visible = true;
+        _exportToast.BringToFront();
+        _exportToastTimer.Stop();
+        _exportToastTimer.Start();
+    }
+
+    private void FadeExportToast()
+    {
+        const int displayMilliseconds = 5000;
+        const int fadeMilliseconds = 800;
+        double elapsed = (DateTime.UtcNow - _exportToastShownAt).TotalMilliseconds;
+        if (elapsed < displayMilliseconds) return;
+
+        double opacity = Math.Clamp(1 - (elapsed - displayMilliseconds) / fadeMilliseconds, 0, 1);
+        Color background = Color.FromArgb(14, 17, 22);
+        Color green = Color.FromArgb(89, 220, 133);
+        _exportToast.ForeColor = Color.FromArgb(
+            (int)(background.R + (green.R - background.R) * opacity),
+            (int)(background.G + (green.G - background.G) * opacity),
+            (int)(background.B + (green.B - background.B) * opacity));
+        if (opacity > 0) return;
+        _exportToastTimer.Stop();
+        _exportToast.Visible = false;
+    }
+
+    private void ShowMsetAnimations()
+    {
+        if (_animationsWindow is { IsDisposed: false, Visible: true })
         {
-            _msetPose.Visible = false;
-            _msetPlay.Visible = false;
+            CloseMsetAnimationsWindow();
             return;
         }
+        if (_selected == null || GetUsableMsetAnimations().Length == 0) return;
 
-        int[] sections = GetUsableMsetSections();
-        int[] animations = GetUsableMsetAnimations();
-        _msetPose.Visible = sections.Length != 0;
-        _msetPlay.Visible = animations.Length != 0;
-        int current = Array.IndexOf(sections, _activeMsetSection);
-        _msetPose.Text = current >= 0
-            ? sections.Length > 1 && (current + 1 < sections.Length || _msetPlaybackTimer.Enabled)
-                ? $"MSET pose {current + 1}/{sections.Length} · Next"
-                : "Restore base pose"
-            : "Apply MSET pose";
+        var window = new Form
+        {
+            Text = $"Animations · {_selected.Name}",
+            FormBorderStyle = FormBorderStyle.None,
+            StartPosition = FormStartPosition.Manual,
+            ShowInTaskbar = false,
+            MinimizeBox = false,
+            MaximizeBox = false,
+            Size = new Size(340, 400),
+            BackColor = Color.FromArgb(112, 132, 158),
+            ForeColor = Color.FromArgb(229, 233, 240),
+            Padding = new Padding(2),
+            Font = Font
+        };
+        window.FormClosing += (_, e) =>
+        {
+            if (!_allowAnimationsWindowClose && e.CloseReason == CloseReason.UserClosing)
+                e.Cancel = true;
+        };
+        var content = new Panel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Color.FromArgb(24, 29, 37),
+            Padding = new Padding(8)
+        };
+        var list = new ListBox
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Color.FromArgb(16, 20, 27),
+            ForeColor = Color.FromArgb(220, 228, 239),
+            BorderStyle = BorderStyle.None,
+            SelectionMode = SelectionMode.MultiExtended,
+            IntegralHeight = false,
+            ItemHeight = 28,
+            Font = Font,
+            Margin = new Padding(10)
+        };
+        var options = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Bottom,
+            Height = 38,
+            Padding = new Padding(8, 0, 0, 0),
+            WrapContents = false,
+            BackColor = content.BackColor
+        };
+        var autoPlay = new CheckBox
+        {
+            Text = "Auto Play",
+            AutoSize = true,
+            Checked = _autoPlay,
+            ForeColor = window.ForeColor,
+            BackColor = content.BackColor,
+            UseVisualStyleBackColor = false,
+            Margin = new Padding(3, 8, 18, 0)
+        };
+        autoPlay.CheckedChanged += (_, _) => _autoPlay = autoPlay.Checked;
+        var loop = new CheckBox
+        {
+            Text = "Loop",
+            AutoSize = true,
+            Checked = _loop,
+            ForeColor = window.ForeColor,
+            BackColor = content.BackColor,
+            UseVisualStyleBackColor = false,
+            Margin = new Padding(3, 8, 3, 0)
+        };
+        loop.CheckedChanged += (_, _) => _loop = loop.Checked;
+        options.Controls.Add(autoPlay);
+        options.Controls.Add(loop);
+        list.SelectedIndexChanged += (_, _) =>
+        {
+            if (_updatingMsetAnimationList) return;
+            if (list.SelectedItems.Count == 1 &&
+                list.SelectedItems[0] is MsetAnimationItem item &&
+                _selected != null)
+                SelectMsetAnimation(item.SectionIndex);
+            UpdateMsetControls();
+        };
+        content.Controls.Add(list);
+        content.Controls.Add(options);
+        window.Controls.Add(content);
+        window.FormClosed += (_, _) =>
+        {
+            if (ReferenceEquals(_animationsWindow, window))
+            {
+                _animationsWindow = null;
+                _animationsList = null;
+                _allowAnimationsWindowClose = false;
+                UpdateMsetControls();
+                if (_animations.Parent is Panel stage)
+                    LayoutViewportControls(stage);
+            }
+        };
+        _animationsWindow = window;
+        _animationsList = list;
+        RefreshMsetAnimationList();
+        PositionAnimationsWindow(window);
+        window.Show(this);
+        if (_animations.Parent is Panel stage)
+            LayoutViewportControls(stage);
     }
 
-    private int[] GetUsableMsetSections()
+    private void CloseMsetAnimationsWindow()
     {
-        ArdViewerModel? selected = _selected;
-        if (selected == null) return Array.Empty<int>();
-        return selected.MsetSections
-            .Select((section, index) => (section, index))
-            .Where(item => item.section.HasPose &&
-                item.section.JointLocalMatrices.Count == selected.Joints.Count)
-            .Select(item => item.index)
-            .ToArray();
+        if (_animationsWindow is not { IsDisposed: false } window) return;
+        _allowAnimationsWindowClose = true;
+        window.Close();
+    }
+
+    private void RefreshMsetAnimationList()
+    {
+        if (_animationsWindow is not { IsDisposed: false } window ||
+            _animationsList is not { IsDisposed: false } list)
+            return;
+
+        _updatingMsetAnimationList = true;
+        try
+        {
+            list.Items.Clear();
+            if (_selected == null)
+            {
+                UpdateMsetControls();
+                return;
+            }
+            window.Text = $"Animations · {_selected.Name}";
+            foreach (int sectionIndex in GetUsableMsetAnimations())
+            {
+                ArdViewerMsetSection section = _selected.MsetSections[sectionIndex];
+                list.Items.Add(new MsetAnimationItem(sectionIndex,
+                    $"Animation {sectionIndex + 1}  ·  MMTN +0x{section.Offset:X}  ·  {section.FrameEnd} frames  ·  {section.FramesPerSecond:0.##} FPS"));
+            }
+        }
+        finally
+        {
+            _updatingMsetAnimationList = false;
+        }
+        UpdateMsetControls();
+    }
+
+    private void PositionAnimationsWindow(Form window)
+    {
+        Control parent = _animations.Parent ?? this;
+        Rectangle bounds = parent.RectangleToScreen(parent.ClientRectangle);
+        Point buttonScreen = _animations.PointToScreen(Point.Empty);
+        int width = Math.Max(1, Math.Min(340, bounds.Width));
+        int availableAbove = buttonScreen.Y - bounds.Top - 8;
+        int height = Math.Max(1, Math.Min(400, Math.Min(bounds.Height, availableAbove)));
+        window.Size = new Size(width, height);
+        int x = buttonScreen.X + (_animations.Width - window.Width) / 2;
+        int y = buttonScreen.Y - window.Height - 8;
+        int maxX = Math.Max(bounds.Left, bounds.Right - window.Width);
+        int maxY = Math.Max(bounds.Top, bounds.Bottom - window.Height);
+        window.Location = new Point(
+            Math.Clamp(x, bounds.Left, maxX),
+            Math.Clamp(y, bounds.Top, Math.Min(maxY, Math.Max(bounds.Top, buttonScreen.Y - window.Height - 8))));
+    }
+
+    private void UpdateMsetControls()
+    {
+        int[] animations = GetUsableMsetAnimations();
+        bool hasAnimations = animations.Length > 0;
+        bool hasActiveAnimation = animations.Contains(_activeMsetSection);
+        int selectedAnimationCount = _animationsWindow is { IsDisposed: false, Visible: true } &&
+            _animationsList is { IsDisposed: false }
+                ? _animationsList.SelectedItems.Count
+                : 0;
+        _animations.Visible = hasAnimations ||
+            _animationsWindow is { IsDisposed: false, Visible: true };
+        _msetPlay.Visible = selectedAnimationCount == 1;
+        _exportMset.Visible = selectedAnimationCount > 0;
+        _msetPlay.Text = _msetPlaybackTimer.Enabled ? "Pause" : "Play";
+        _msetTimeline.Visible = hasActiveAnimation && _hasMsetTimelineSpace;
+        _msetTime.Visible = hasActiveAnimation && _hasMsetTimelineSpace;
+        if (hasActiveAnimation && _selected != null)
+            UpdateMsetTimeline(_selected.MsetSections[_activeMsetSection]);
+    }
+
+    private void SelectMsetAnimation(int sectionIndex, bool allowAutoPlay = true)
+    {
+        if (_selected == null || !GetUsableMsetAnimations().Contains(sectionIndex) ||
+            sectionIndex == _activeMsetSection && !_msetPlaybackTimer.Enabled)
+            return;
+
+        if (_msetPlaybackTimer.Enabled) _msetPlaybackTimer.Stop();
+        _activeMsetSection = sectionIndex;
+        _activeMsetFrame = 0;
+        _viewport.SetMsetAnimationFrame(sectionIndex, 0);
+        _msetPlay.Text = "Play";
+        UpdateMsetControls();
+        if (allowAutoPlay && _autoPlay) ToggleMsetPlayback();
     }
 
     private int[] GetUsableMsetAnimations()
@@ -740,15 +1082,15 @@ internal sealed class NativeViewerForm : Form
         if (sections.Length == 0) return;
         if (!sections.Contains(_activeMsetSection))
         {
-            _activeMsetSection = sections[0];
-            UpdateMsetPoseButton();
+            SelectMsetAnimation(sections[0], allowAutoPlay: false);
         }
-        _activeMsetFrame = 0;
-        _msetPlaybackStart = Stopwatch.GetTimestamp();
+        ArdViewerMsetSection section = _selected!.MsetSections[_activeMsetSection];
+        _activeMsetFrame %= section.FrameEnd;
+        long offset = (long)(_activeMsetFrame / section.FramesPerSecond * Stopwatch.Frequency);
+        _msetPlaybackStart = Stopwatch.GetTimestamp() - offset;
         _viewport.SetMsetAnimationFrame(_activeMsetSection, _activeMsetFrame);
-        _msetPlay.Text = "Pause";
         _msetPlaybackTimer.Start();
-        UpdateMsetPoseButton();
+        UpdateMsetControls();
     }
 
     private void AdvanceMsetPose()
@@ -768,15 +1110,45 @@ internal sealed class NativeViewerForm : Form
             return;
         }
         double elapsed = (Stopwatch.GetTimestamp() - _msetPlaybackStart) / (double)Stopwatch.Frequency;
-        _activeMsetFrame = (float)(elapsed * section.FramesPerSecond % section.FrameEnd);
+        float frame = (float)(elapsed * section.FramesPerSecond);
+        if (!_loop && frame >= section.FrameEnd)
+        {
+            _activeMsetFrame = section.FrameEnd;
+            _viewport.SetMsetAnimationFrame(_activeMsetSection, _activeMsetFrame);
+            UpdateMsetTimeline(section);
+            StopMsetPlayback();
+            return;
+        }
+        _activeMsetFrame = _loop ? frame % section.FrameEnd : frame;
         _viewport.SetMsetAnimationFrame(_activeMsetSection, _activeMsetFrame);
+        UpdateMsetTimeline(section);
     }
 
     private void StopMsetPlayback()
     {
         _msetPlaybackTimer.Stop();
         _msetPlay.Text = "Play";
-        UpdateMsetPoseButton();
+        UpdateMsetControls();
+    }
+
+    private void UpdateMsetTimeline(ArdViewerMsetSection section)
+    {
+        int value = (int)Math.Round(_activeMsetFrame / section.FrameEnd * _msetTimeline.Maximum);
+        _updatingMsetTimeline = true;
+        try
+        {
+            _msetTimeline.Value = Math.Clamp(value, _msetTimeline.Minimum, _msetTimeline.Maximum);
+        }
+        finally
+        {
+            _updatingMsetTimeline = false;
+        }
+        UpdateMsetTimeLabel(section);
+    }
+
+    private void UpdateMsetTimeLabel(ArdViewerMsetSection section)
+    {
+        _msetTime.Text = $"{_activeMsetFrame:0.0}/{section.FrameEnd}";
     }
 
     private static string GetExportDirectory(ArdViewerModel model)
@@ -796,7 +1168,9 @@ internal sealed class NativeViewerForm : Form
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
+        CloseMsetAnimationsWindow();
         _msetPlaybackTimer.Dispose();
+        _exportToastTimer.Dispose();
         foreach (Control control in _textures.Controls)
         {
             if (control is Panel panel)
@@ -804,6 +1178,7 @@ internal sealed class NativeViewerForm : Form
                     if (child is PictureBox picture) picture.Image?.Dispose();
         }
         _applicationIcon?.Dispose();
+        _categoryFont?.Dispose();
         base.OnFormClosed(e);
     }
 }
@@ -856,6 +1231,93 @@ internal sealed class NativeActionButton : Button
     {
         base.OnMouseLeave(e);
         Invalidate();
+    }
+}
+
+internal static class NativeArchiveCategories
+{
+    private static readonly (string Prefix, string Category)[] Regions =
+    [
+        ("al", "Agrabah"),
+        ("aw", "Wonderland"),
+        ("dc", "Disney Castle"),
+        ("dh", "Dive into the Heart"),
+        ("di", "Destiny Islands"),
+        ("ew", "End of the World"),
+        ("he", "Olympus Coliseum"),
+        ("lm", "Atlantica"),
+        ("nm", "Halloween Town"),
+        ("pc", "Hollow Bastion"),
+        ("pi", "Monstro"),
+        ("po", "100th Acre Wood"),
+        ("pp", "Neverland"),
+        ("tw", "Traverse Town"),
+        ("tz", "Deep Jungle")
+    ];
+
+    internal static string? GetCategory(string archivePath)
+    {
+        string name = Path.GetFileNameWithoutExtension(archivePath);
+        if (name.Equals("prize", StringComparison.OrdinalIgnoreCase))
+            return "Items";
+
+        foreach ((string prefix, string category) in Regions)
+            if (name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                return category;
+        return null;
+    }
+}
+
+internal static class NativeMsetExporter
+{
+    internal static IReadOnlyList<string> Export(
+        ArdViewerModel model, string directory, IEnumerable<int> sectionIndices)
+    {
+        HashSet<int> selectedIndices = sectionIndices.ToHashSet();
+        var sections = model.MsetSections
+            .Select((section, index) => (section, index))
+            .Where(item => selectedIndices.Contains(item.index) && item.section.RawData.Length != 0)
+            .ToArray();
+        if (sections.Length == 0)
+            throw new InvalidOperationException("The selection contains no original MSET data.");
+
+        Directory.CreateDirectory(directory);
+        string modelName = SanitizeFileName(model.Name);
+        var paths = new List<string>(sections.Length);
+        for (int i = 0; i < sections.Length; i++)
+        {
+            ArdViewerMsetSection section = sections[i].section;
+            string fileName = $"{modelName}_mset_{sections[i].index + 1:D2}_0x{section.Offset:X}.mset";
+            string path = Path.Combine(directory, fileName);
+            File.WriteAllBytes(path, CreateSingleAnimationBlock(section));
+            paths.Add(path);
+        }
+        return paths;
+    }
+
+    private static byte[] CreateSingleAnimationBlock(ArdViewerMsetSection section)
+    {
+        byte[] data = section.RawData.ToArray();
+        if (data.Length < 0x38)
+            throw new InvalidDataException("An embedded MSET block has a truncated header.");
+
+        uint tableOffset = System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(0x30));
+        if (tableOffset > data.Length - 8)
+            throw new InvalidDataException("An embedded MSET reference table is out of bounds.");
+
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(
+            data.AsSpan((int)tableOffset), section.ReferenceValue);
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(
+            data.AsSpan((int)tableOffset + 4), uint.MaxValue);
+        return data;
+    }
+
+    private static string SanitizeFileName(string name)
+    {
+        string safeName = string.Concat(name.Select(character =>
+            Path.GetInvalidFileNameChars().Contains(character) || character is '/' or '\\' ? '_' : character))
+            .Trim(' ', '.');
+        return safeName.Length == 0 ? "model" : safeName;
     }
 }
 
@@ -921,6 +1383,7 @@ internal sealed class NativeGlViewport : Panel
     private Point _lastMouse;
     private bool _dragging;
     private bool _panning;
+    private MouseButtons _dragButton;
 
     internal NativeGlViewport()
     {
@@ -1176,7 +1639,7 @@ internal sealed class NativeGlViewport : Panel
         GlClearColor(.055f, .067f, .086f, 1);
         GlClear(GlColorBufferBit | GlDepthBufferBit);
         float aspect = Math.Max(.01f, (float)ClientSize.Width / Math.Max(1, ClientSize.Height));
-        float near = Math.Max(.001f, _distance / 1000f), far = _distance + _radius * 20;
+        float near = Math.Max(.001f, _distance / 1000f), far = _distance + _radius * 100;
         float top = near * MathF.Tan(MathF.PI / 8);
         GlMatrixMode(GlProjection);
         GlLoadIdentity();
@@ -1284,7 +1747,9 @@ internal sealed class NativeGlViewport : Panel
         if (e.Button is not (MouseButtons.Left or MouseButtons.Middle or MouseButtons.Right)) return;
         Focus();
         _dragging = true;
-        _panning = e.Button == MouseButtons.Middle || ModifierKeys.HasFlag(Keys.Shift);
+        _dragButton = e.Button;
+        _panning = _dragButton is MouseButtons.Middle or MouseButtons.Right ||
+            ModifierKeys.HasFlag(Keys.Shift);
         _lastMouse = e.Location;
         Capture = true;
     }
@@ -1294,7 +1759,11 @@ internal sealed class NativeGlViewport : Panel
         if (!_dragging) return;
         int dx = e.X - _lastMouse.X, dy = e.Y - _lastMouse.Y;
         _lastMouse = e.Location;
-        if (_panning)
+        bool pan = _panning ||
+            (_dragButton is MouseButtons.Right or MouseButtons.Middle &&
+                Control.MouseButtons.HasFlag(_dragButton)) ||
+            ModifierKeys.HasFlag(Keys.Shift);
+        if (pan)
         {
             float scale = _distance / Math.Max(1, ClientSize.Height) * .8f;
             float[] right = { MathF.Cos(_theta), 0, -MathF.Sin(_theta) };

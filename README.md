@@ -25,6 +25,7 @@ textures, and exports it as a glTF 2.0 file with PNG textures alongside it.
 - Orbit, zoom, and pan around the model, with a ground grid for scale and
   orientation.
 - View mesh, vertex, triangle, and texture counts for the selected model.
+- Browse embedded MSET animations in a floating list and scrub their playback.
 - Browse decoded model textures and open a larger texture preview.
 - Export the selected model to a glTF 2.0 file with separate PNG textures.
 - Start without loading or selecting an archive; the Export button appears
@@ -68,6 +69,13 @@ included. The app remembers the last folder in
 5. Expand an archive using the arrow beside its name, then select a model to
    display it.
 
+When multiple ARD files are loaded together, recognized archive name prefixes
+are grouped into world categories (Agrabah, Wonderland, Disney Castle, Dive into
+the Heart, Destiny Islands, End of the World, Olympus Coliseum, Atlantica,
+Halloween Town, Hollow Bastion, Monstro, 100th Acre Wood, Neverland, Traverse
+Town, Deep Jungle, and Items for `prize.ard`). Unrecognized archives remain
+ungrouped.
+
 The viewer does not automatically choose a model. Select an individual MDLS or
 MFA entry to activate the viewport, statistics, texture gallery, and Export
 button. On later launches, it automatically scans and loads ARD files from the
@@ -79,9 +87,13 @@ last selected folder.
 | --- | --- |
 | Orbit around the model | Drag with the mouse |
 | Zoom in or out | Mouse wheel |
-| Pan the view | Hold Shift while dragging, or drag with the middle mouse button |
+| Pan the view | Drag with the right or middle mouse button, or hold Shift while dragging |
 | Show or hide an archive's models | Select the arrow beside the archive name |
 | Restore the default view | Select **Reset camera** |
+| Open or close the fixed MSET animation list | Select **Animations** |
+| Play, pause, or seek an animation | Use **Play/Pause** and the timeline slider |
+| Automatically play a selected animation | Enable **Auto Play** in the animation list |
+| Stop at the end or repeat the current animation | Toggle **Loop** in the animation list |
 | Inspect a texture | Select a texture thumbnail |
 | Close the enlarged texture preview | Press Escape or click outside the preview |
 
@@ -98,6 +110,15 @@ The geometry buffer is embedded in the `.gltf` file. Each decoded texture is
 saved as a separate PNG beside it, and referenced by a relative filename in
 the glTF. Model names are sanitized before they are used as directory and file
 names.
+
+For MDLS models with embedded MSET data, open **Animations** and select one or
+more entries. **Export selected MSETS...** writes each selected animation as
+its own `.mset` file in the same model-specific extraction folder as the glTF
+export. Each file retains the original MMTN data and isolates its corresponding
+animation reference. **Play** is shown only when exactly one animation is
+selected.
+The animation list identifies entries by index and MMTN offset; no internal
+animation name is currently decoded from these blocks.
 
 When importing a skinned export in Blender, its glTF importer may create a
 hidden `_not_exported` collection with icospheres to display custom bone shapes.
@@ -138,13 +159,14 @@ skeleton. Key headers contain a signed time in 1/256-frame units and an
 interpolation byte: hold, linear, or cubic Hermite. Tangents use the same time
 units. Each curve preserves its hold, linear, or repeat behavior at the edges;
 support keys beyond a clip's playback end are retained. **Play/Pause**
-evaluates those keyframes over the clip's actual timeline; it does not cycle or
-blend between unrelated static poses. Joint curves and helper curves use
+evaluates those keyframes over the clip's actual timeline; the floating
+**Animations** list selects a clip, and the timeline slider scrubs its current
+frame. Playback resumes from the selected frame; it does not cycle or blend
+between unrelated static poses. Joint curves and helper curves use
 separate index spaces. Motion flags drive fixed joints, helper positions and
 orientations, and one- or two-bone IK chains, with the same evaluated skeleton
 used by the mesh, bone overlay, and export. Clips animated only through helpers
-are also playable. **Apply MSET pose** still cycles decoded
-references, and **Restore base pose** returns to the bind pose. Unsupported curve
+are also playable. Unsupported curve
 edge modes are skipped and reported. **Show bones** toggles the model skeleton in
 the preview, including its animated joint positions. Exports preserve the selected
 pose and armature, including the current animation frame when exporting during

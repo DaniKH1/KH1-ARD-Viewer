@@ -22,6 +22,33 @@ static Matrix4x4[] Worlds(ArdViewerModel model, ArdViewerMsetSection section, fl
     return worlds;
 }
 
+var archiveCategories = new Dictionary<string, string>
+{
+    ["al01.ard"] = "Agrabah",
+    ["aw01.ard"] = "Wonderland",
+    ["dc01.ard"] = "Disney Castle",
+    ["dh01.ard"] = "Dive into the Heart",
+    ["di01.ard"] = "Destiny Islands",
+    ["ew01.ard"] = "End of the World",
+    ["he01.ard"] = "Olympus Coliseum",
+    ["lm01.ard"] = "Atlantica",
+    ["nm01.ard"] = "Halloween Town",
+    ["pc01.ard"] = "Hollow Bastion",
+    ["pi01.ard"] = "Monstro",
+    ["po01.ard"] = "100th Acre Wood",
+    ["pp01.ard"] = "Neverland",
+    ["tw01.ard"] = "Traverse Town",
+    ["tz01.ard"] = "Deep Jungle",
+    ["prize.ard"] = "Items"
+};
+foreach ((string fileName, string category) in archiveCategories)
+    if (NativeArchiveCategories.GetCategory(fileName) != category)
+        throw new Exception($"Archive {fileName} was not categorized as {category}.");
+if (NativeArchiveCategories.GetCategory("unknown.ard") is not null ||
+    NativeArchiveCategories.GetCategory("prize_extra.ard") is not null)
+    throw new Exception("Unknown archive names were incorrectly categorized.");
+Console.WriteLine("PASS: ARD region category mapping and unknown archive handling.");
+
 var curve = new ArdViewerMsetCurve
 {
     Keys = [new() { Time = 128, Value = 2, Interpolation = 0 }, new() { Time = 384, Value = 6 }]
@@ -47,12 +74,12 @@ Console.WriteLine("PASS: hold, linear, Hermite, fractional/signed times, extrapo
 
 // A small synthetic MMTN with a helper index greater than the joint count.
 // Encoded bytes exercise the parser, independently of the sampler's objects.
-var binary = new byte[0x180];
+var binary = new byte[0x200];
 void U32(int offset, uint value) => System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(binary.AsSpan(offset), value);
 void U16(int offset, ushort value) => System.Buffers.Binary.BinaryPrimitives.WriteUInt16LittleEndian(binary.AsSpan(offset), value);
 void F32(int offset, float value) => U32(offset, (uint)BitConverter.SingleToInt32Bits(value));
 U32(0, 0x4e544d4d); U32(4, (uint)binary.Length);
-U32(0x30, 0x40); U32(0x34, 0x48); U32(0x40, 0x10); U32(0x44, uint.MaxValue);
+U32(0x30, 0x40); U32(0x34, 0x4c); U32(0x40, 0x10); U32(0x44, 0x140); U32(0x48, uint.MaxValue);
 const int descriptor = 0x50;
 U32(descriptor + 4, 2); F32(descriptor + 8, 60); U32(descriptor + 0x10, 1);
 U32(descriptor + 0x14, 0x40);
@@ -70,10 +97,18 @@ for (int i = 0; i < times.Length; i++)
 }
 for (int i = 0; i < 3; i++)
     for (int j = 0; j < 3; j++) F32(0x100 + i * 40 + j * 4, 1);
+const int secondDescriptor = 0x180;
+U32(secondDescriptor + 4, 2); F32(secondDescriptor + 8, 60);
+U32(secondDescriptor + 0x10, 1); U32(secondDescriptor + 0x14, 0x40);
+U32(secondDescriptor + 0x3c, 0x60);
 var parsed = Kh1MsetParser.ReadEmbedded(binary, 1, 0);
-if (parsed.Count != 1 || parsed[0].Curves.Count != 1 || parsed[0].HelperCurves.Count != 1 ||
+if (parsed.Count != 2 || parsed[0].ReferenceValue != 0x10 ||
+    parsed[1].ReferenceValue != 0x140 ||
+    parsed[0].Curves.Count != 1 || parsed[0].HelperCurves.Count != 1 ||
     parsed[0].HelperCurves[0].Joint != 2 || parsed[0].Curves[0].Keys[0].Time != -128)
     throw new Exception("Packed keys or separate helper channel table decoded incorrectly.");
+if (!parsed[0].RawData.SequenceEqual(binary))
+    throw new Exception("The parser did not preserve the complete original MMTN block.");
 Near(parsed[0].Curves[0].Sample(0), 0, "parsed hold key");
 Near(parsed[0].Curves[0].Sample(1.75f), 1.5f, "support key beyond clip duration");
 Console.WriteLine("PASS: packed MMTN keys, helper index space and support keys beyond clip end.");
@@ -130,6 +165,25 @@ string exportDirectory = Path.Combine(Path.GetTempPath(), "kh1-ard-viewer-" + Gu
 Directory.CreateDirectory(exportDirectory);
 try
 {
+    var msetExportModel = new ArdViewerModel
+    {
+        Name = "synthetic",
+        MsetSections = parsed
+    };
+    IReadOnlyList<string> msetFiles = NativeMsetExporter.Export(msetExportModel, exportDirectory, [0, 1]);
+    uint[] exportedReferences = msetFiles
+        .Select(path => System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(
+            File.ReadAllBytes(path).AsSpan(0x40)))
+        .ToArray();
+    if (msetFiles.Count != 2 || !exportedReferences.SequenceEqual([0x10u, 0x140u]) ||
+        msetFiles.Any(path => Kh1MsetParser.ReadEmbedded(File.ReadAllBytes(path), 1, 0).Count != 1))
+        throw new Exception("MSET export did not create one independently referenced file per animation.");
+    IReadOnlyList<string> selectedMsetFiles = NativeMsetExporter.Export(msetExportModel, exportDirectory, [1]);
+    if (selectedMsetFiles.Count != 1 ||
+        System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(
+            File.ReadAllBytes(selectedMsetFiles[0]).AsSpan(0x40)) != 0x140)
+        throw new Exception("MSET export did not honor the selected animation subset.");
+
     var sharedTextureModel = new ArdViewerModel
     {
         Textures = [new()
