@@ -293,7 +293,7 @@ internal sealed class NativeViewerForm : Form
         _bones.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
         _bones.Location = new Point(126, 14);
         _bones.Anchor = AnchorStyles.Top | AnchorStyles.Left;
-        _bones.Visible = true;
+        _bones.Visible = false;
         _bones.Click += (_, _) =>
         {
             _bones.Text = _viewport.ToggleShowBones() ? "Hide bones" : "Show bones";
@@ -624,7 +624,7 @@ internal sealed class NativeViewerForm : Form
         foreach (ArdViewerModel model in loaded)
         {
             model.Archive = archiveName;
-            var node = new TreeNode($"{model.Format} / {model.Name}") { Tag = model };
+            var node = new TreeNode($"{model.Name}.{model.Format.ToLowerInvariant()}") { Tag = model };
             archiveNode.Nodes.Add(node);
             _nodes[model] = node;
             _allModels.Add(model);
